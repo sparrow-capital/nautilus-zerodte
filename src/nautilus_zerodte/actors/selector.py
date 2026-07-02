@@ -68,7 +68,7 @@ class SelectorActor(Actor):
         intents = list(self._buffer)
         self._buffer.clear()
         approved, rejected = select_intents(intents, self._policy)
-        self._journal_rejected(rejected)
+        self._publish_rejected(rejected)
         routed: list[TradeIntent] = []
         for intent in approved:
             if self._route_approval(intent):
@@ -90,18 +90,32 @@ class SelectorActor(Actor):
     def _on_finalize_alert(self, _event) -> None:  # noqa: ANN001
         self.finalize()
 
-    def _journal_rejected(self, rejected: list[TradeIntent]) -> None:
+    def _rejected_payload(self, intent: TradeIntent, *, reason: str) -> dict:
+        return {
+            "event": "SELECTOR_REJECTED",
+            "intent_id": str(intent.intent_id),
+            "strategy_id": intent.strategy_id,
+            "instrument_id": intent.instrument_id,
+            "edge_after_cost_bps": intent.edge_after_cost_bps,
+            "reason": reason,
+        }
+
+    def _approved_payload(self, intent: TradeIntent, *, actor_kind: ActorKind) -> dict:
+        return {
+            "event": "SELECTOR_APPROVED",
+            "intent_id": str(intent.intent_id),
+            "strategy_id": intent.strategy_id,
+            "instrument_id": intent.instrument_id,
+            "edge_after_cost_bps": intent.edge_after_cost_bps,
+            "actor_kind": actor_kind.value,
+        }
+
+    def _publish_rejected(self, rejected: list[TradeIntent]) -> None:
         for intent in rejected:
             self._journal.record(
                 GateStage.LIFECYCLE,
                 ref_id=intent.intent_id,
-                payload={
-                    "event": "SELECTOR_REJECTED",
-                    "intent_id": str(intent.intent_id),
-                    "strategy_id": intent.strategy_id,
-                    "instrument_id": intent.instrument_id,
-                    "edge_after_cost_bps": intent.edge_after_cost_bps,
-                },
+                payload=self._rejected_payload(intent, reason="diversification_cap"),
                 strategy_id=intent.strategy_id,
             )
             self.msgbus.publish(
@@ -113,27 +127,7 @@ class SelectorActor(Actor):
                 ),
             )
 
-    def _route_approval(self, intent: TradeIntent) -> bool:
-        actor_kind = classify_intent(intent, self._approval_thresholds)
-        self._journal.record(
-            GateStage.LIFECYCLE,
-            ref_id=intent.intent_id,
-            payload={
-                "event": "SELECTOR_APPROVED",
-                "intent_id": str(intent.intent_id),
-                "strategy_id": intent.strategy_id,
-                "instrument_id": intent.instrument_id,
-                "edge_after_cost_bps": intent.edge_after_cost_bps,
-                "actor_kind": actor_kind.value,
-            },
-            strategy_id=intent.strategy_id,
-        )
-        if actor_kind is ActorKind.HUMAN:
-            approved = self._human_handler.handle(intent, actor_kind=actor_kind)
-        else:
-            approved = self._automation_handler.handle(intent, actor_kind=actor_kind)
-        if not approved:
-            return False
+    def _publish_approved(self, intent: TradeIntent, *, actor_kind: ActorKind) -> None:
         snapshot = trade_intent_to_snapshot(intent)
         self.msgbus.publish(
             TRADE_INTENT_APPROVED_TOPIC,
@@ -149,4 +143,20 @@ class SelectorActor(Actor):
                 actor_kind=actor_kind.value,
             ),
         )
+
+    def _route_approval(self, intent: TradeIntent) -> bool:
+        actor_kind = classify_intent(intent, self._approval_thresholds)
+        self._journal.record(
+            GateStage.LIFECYCLE,
+            ref_id=intent.intent_id,
+            payload=self._approved_payload(intent, actor_kind=actor_kind),
+            strategy_id=intent.strategy_id,
+        )
+        if actor_kind is ActorKind.HUMAN:
+            approved = self._human_handler.handle(intent, actor_kind=actor_kind)
+        else:
+            approved = self._automation_handler.handle(intent, actor_kind=actor_kind)
+        if not approved:
+            return False
+        self._publish_approved(intent, actor_kind=actor_kind)
         return True

@@ -60,3 +60,22 @@ uv run nautilus-zerodte journal summary --path runs/latest.jsonl
 | `src/nautilus_zerodte/journal/` | JSONL audit trail |
 | `configs/profiles/` | Paper and backtest profiles per venue |
 | `docs/design/` | Architecture diagrams and NT capability mapping |
+
+## Environment overrides (runtime contract)
+
+Config is primarily YAML-layered via `configs/`, with a small set of **environment
+variable overrides** applied in `src/nautilus_zerodte/config/loader.py`:
+
+- **IB connection**
+  - `IB_HOST`
+  - `IB_PORT`
+  - `IB_CLIENT_ID`
+- **Deribit**
+  - `DERIBIT_TESTNET` (set `1/true/yes` to use testnet)
+  - `DERIBIT_API_KEY` / `DERIBIT_API_SECRET` (default env var names)
+  - `DERIBIT_TESTNET_API_KEY` / `DERIBIT_TESTNET_API_SECRET` (fallback when `DERIBIT_TESTNET=1`)
+- **Operational**
+  - `DRY_RUN` (set `1/true/yes` to force dry-run mode)
+
+For a higher-level overview of wiring and the strategy/selector flow, see
+`docs/architecture.md`.

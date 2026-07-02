@@ -10,7 +10,12 @@ from nautilus_zerodte.models.enums import GateStage, StrategyState, VenueAdapter
 from nautilus_zerodte.models.trade_intent import TradeIntent
 from nautilus_zerodte.strategies.base import BaseZeroDteStrategy, BaseZeroDteStrategyConfig
 from nautilus_zerodte.strategies.context import ChainEvaluationContext
-from nautilus_zerodte.strategies.selectors.base import SpreadStructure, StructureSelector
+from nautilus_zerodte.strategies.selectors.base import (
+    SpreadStructure,
+    StructureSelector,
+    quote_spread_liquidity,
+    strike_price,
+)
 from nautilus_zerodte.strategies.selectors.registry import resolve_structure_selector
 
 
@@ -213,21 +218,20 @@ class ReferenceZeroDteStrategy(BaseZeroDteStrategy):
     def _context_from_quote_tick(self, tick) -> ChainEvaluationContext | None:  # noqa: ANN001
         if not self._ref_config.backtest_plumbing or not self._actors_ready():
             return None
-        bid = float(tick.bid_price)
-        ask = float(tick.ask_price)
-        mid = (bid + ask) / 2
-        spread_bps = ((ask - bid) / mid) * 10_000 if mid > 0 else 100.0
-        liquidity = max(0.0, min(1.0, 1.0 - spread_bps / 100.0))
-        atm = round(mid)
+        metrics = quote_spread_liquidity(
+            bid=float(tick.bid_price),
+            ask=float(tick.ask_price),
+        )
+        atm = round(metrics.mid)
         return ChainEvaluationContext(
             instrument_id=str(tick.instrument_id),
-            underlying_mid=mid,
+            underlying_mid=metrics.mid,
             atm_strike=float(atm),
             edge_after_cost_bps=max(self.config.min_edge_after_cost_bps, 10.0),
-            liquidity_score=max(self.config.min_liquidity_score, liquidity),
+            liquidity_score=max(self.config.min_liquidity_score, metrics.liquidity_score),
             ts_event=int(tick.ts_event),
             spread_instrument_id=str(tick.instrument_id),
-            rationale={"source": "backtest_plumbing", "spread_bps": spread_bps},
+            rationale={"source": "backtest_plumbing", "spread_bps": metrics.spread_bps},
         )
 
     def _context_from_selection(
@@ -236,9 +240,7 @@ class ReferenceZeroDteStrategy(BaseZeroDteStrategy):
         option_chain_slice,
     ) -> ChainEvaluationContext:
         underlying_mid = float(selection.low_strike)
-        from nautilus_zerodte.strategies.selectors.deribit import _strike_price
-
-        greeks = option_chain_slice.get_call_greeks(_strike_price(selection.low_strike))
+        greeks = option_chain_slice.get_call_greeks(strike_price(selection.low_strike))
         if greeks is not None and getattr(greeks, "underlying_price", None):
             underlying_mid = float(greeks.underlying_price)
         return ChainEvaluationContext(

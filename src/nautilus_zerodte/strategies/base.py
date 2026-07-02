@@ -30,6 +30,7 @@ from nautilus_zerodte.models.enums import GateStage, RegimeTag, StrategyState
 from nautilus_zerodte.models.risk import RiskPolicy
 from nautilus_zerodte.models.trade_intent import TradeIntent
 from nautilus_zerodte.strategies.context import ChainEvaluationContext
+from nautilus_zerodte.strategies.selectors.base import quote_spread_liquidity
 
 
 class BaseZeroDteStrategyConfig(StrategyConfig, frozen=True):
@@ -286,31 +287,27 @@ class BaseZeroDteStrategy(Strategy):
         if not self._actors_ready():
             return None
         atm = float(option_chain_slice.atm_strike)
-        mid = atm
         call_quote = (
             option_chain_slice.get_call_quote(atm) if option_chain_slice.strike_count else None
         )
-        if call_quote is not None:
-            bid = float(getattr(call_quote, "bid_price", 0) or 0)
-            ask = float(getattr(call_quote, "ask_price", 0) or 0)
-            if bid and ask:
-                mid = (bid + ask) / 2
-        spread_bps = 0.0
-        if call_quote is not None:
-            bid = float(getattr(call_quote, "bid_price", 0) or 0)
-            ask = float(getattr(call_quote, "ask_price", 0) or 0)
-            if bid > 0 and ask > 0:
-                spread_bps = ((ask - bid) / ((ask + bid) / 2)) * 10_000
-        liquidity = max(0.0, min(1.0, 1.0 - spread_bps / 100.0))
+        bid = float(getattr(call_quote, "bid_price", 0) or 0) if call_quote is not None else 0.0
+        ask = float(getattr(call_quote, "ask_price", 0) or 0) if call_quote is not None else 0.0
+        metrics = quote_spread_liquidity(
+            bid=bid,
+            ask=ask,
+            fallback_mid=atm,
+            invalid_spread_bps=0.0,
+            invalid_liquidity_score=1.0,
+        )
         edge = max(self.config.min_edge_after_cost_bps, 10.0)
         return ChainEvaluationContext(
             instrument_id=str(option_chain_slice.series_id),
-            underlying_mid=mid,
+            underlying_mid=metrics.mid,
             atm_strike=atm,
             edge_after_cost_bps=edge,
-            liquidity_score=liquidity,
+            liquidity_score=metrics.liquidity_score,
             ts_event=int(option_chain_slice.ts_event),
-            rationale={"source": "option_chain_slice", "spread_bps": spread_bps},
+            rationale={"source": "option_chain_slice", "spread_bps": metrics.spread_bps},
         )
 
     def _context_from_quote_tick(self, tick) -> ChainEvaluationContext | None:  # noqa: ANN001
@@ -334,44 +331,54 @@ class BaseZeroDteStrategy(Strategy):
         pre_result = evaluate_pre_greek(intent, gate_context)
         if not pre_result.passed:
             assert pre_result.failed_stage is not None
-            self._journal.record(
-                pre_result.failed_stage,
-                ref_id=intent.intent_id,
-                payload={
-                    "event": "GATE_REJECT",
-                    "breached_rules": pre_result.breached_rules,
-                    "intent_id": str(intent.intent_id),
-                },
-                strategy_id=self._strategy_id,
+            self._journal_gate_reject(
+                stage=pre_result.failed_stage,
+                intent=intent,
+                breached_rules=pre_result.breached_rules,
             )
             self._transition(StrategyState.FLAT, reason="gate_reject")
             return
 
-        current = self._portfolio_greek_snapshot()
-        projected = self._portfolio_greek_snapshot(
-            spot_shock=self._risk_policy.spot_shock,
-            vol_shock=self._risk_policy.vol_shock,
-        )
-        assessment = check_risk_policy(
-            self._risk_policy,
-            current,
-            projected,
-            intent_id=intent.intent_id,
-        )
+        assessment = self._assess_risk(intent)
         if not assessment.passed:
-            self._journal.record(
-                GateStage.GREEK,
-                ref_id=intent.intent_id,
-                payload={
-                    "event": "GATE_REJECT",
-                    "breached_rules": assessment.breached_rules,
-                    "intent_id": str(intent.intent_id),
-                },
-                strategy_id=self._strategy_id,
+            self._journal_gate_reject(
+                stage=GateStage.GREEK,
+                intent=intent,
+                breached_rules=assessment.breached_rules,
             )
             self._transition(StrategyState.FLAT, reason="greek_reject")
             return
 
+        self._journal_greek_pass(intent)
+
+        if self._handle_dry_run_intent(intent):
+            self._transition(StrategyState.FLAT, reason="dry_run")
+            return
+
+        if self._queue_for_selector(intent):
+            return
+
+        self._submit_approved_intent(intent)
+
+    def _journal_gate_reject(
+        self,
+        *,
+        stage: GateStage,
+        intent: TradeIntent,
+        breached_rules,
+    ) -> None:  # noqa: ANN001
+        self._journal.record(
+            stage,
+            ref_id=intent.intent_id,
+            payload={
+                "event": "GATE_REJECT",
+                "breached_rules": breached_rules,
+                "intent_id": str(intent.intent_id),
+            },
+            strategy_id=self._strategy_id,
+        )
+
+    def _journal_greek_pass(self, intent: TradeIntent) -> None:
         self._journal.record(
             GateStage.GREEK,
             ref_id=intent.intent_id,
@@ -379,28 +386,42 @@ class BaseZeroDteStrategy(Strategy):
             strategy_id=self._strategy_id,
         )
 
-        if self.config.dry_run:
-            self._journal.record(
-                GateStage.LIFECYCLE,
-                ref_id=intent.intent_id,
-                payload={
-                    "event": "DRY_RUN_INTENT",
-                    "intent_id": str(intent.intent_id),
-                    "instrument_id": intent.instrument_id,
-                    "edge_after_cost_bps": intent.edge_after_cost_bps,
-                },
-                strategy_id=self._strategy_id,
-            )
-            self._transition(StrategyState.FLAT, reason="dry_run")
-            return
+    def _handle_dry_run_intent(self, intent: TradeIntent) -> bool:
+        if not self.config.dry_run:
+            return False
+        self._journal.record(
+            GateStage.LIFECYCLE,
+            ref_id=intent.intent_id,
+            payload={
+                "event": "DRY_RUN_INTENT",
+                "intent_id": str(intent.intent_id),
+                "instrument_id": intent.instrument_id,
+                "edge_after_cost_bps": intent.edge_after_cost_bps,
+            },
+            strategy_id=self._strategy_id,
+        )
+        return True
 
-        if self.config.selector_enabled:
-            self._pending_intent = intent
-            self._transition(StrategyState.PENDING_APPROVAL, reason="selector_queue")
-            self.msgbus.publish(TRADE_INTENT_TOPIC, trade_intent_to_snapshot(intent))
-            return
+    def _queue_for_selector(self, intent: TradeIntent) -> bool:
+        if not self.config.selector_enabled:
+            return False
+        self._pending_intent = intent
+        self._transition(StrategyState.PENDING_APPROVAL, reason="selector_queue")
+        self.msgbus.publish(TRADE_INTENT_TOPIC, trade_intent_to_snapshot(intent))
+        return True
 
-        self._submit_approved_intent(intent)
+    def _assess_risk(self, intent: TradeIntent):
+        current = self._portfolio_greek_snapshot()
+        projected = self._portfolio_greek_snapshot(
+            spot_shock=self._risk_policy.spot_shock,
+            vol_shock=self._risk_policy.vol_shock,
+        )
+        return check_risk_policy(
+            self._risk_policy,
+            current,
+            projected,
+            intent_id=intent.intent_id,
+        )
 
     def _submit_approved_intent(self, intent: TradeIntent) -> None:
         self._active_intent_id = intent.intent_id

@@ -8,7 +8,11 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 
 from nautilus_zerodte.config.schema import FeeScheduleConfig
 from nautilus_zerodte.costs.ib import ib_commission_bps, ib_edge_after_cost_bps
-from nautilus_zerodte.strategies.selectors.base import SpreadStructure
+from nautilus_zerodte.strategies.selectors.base import (
+    SpreadStructure,
+    quote_spread_liquidity,
+    strike_price,
+)
 
 
 def ib_expiry_ns(expiry: str, *, market_close_utc: str = "21:00") -> int:
@@ -72,16 +76,13 @@ def ib_call_spread_id(
 def _quote_liquidity(quote) -> tuple[float, float]:  # noqa: ANN001
     bid = float(getattr(quote, "bid_price", 0) or 0)
     ask = float(getattr(quote, "ask_price", 0) or 0)
-    if bid <= 0 or ask <= 0:
-        return 0.0, 100.0
-    mid = (bid + ask) / 2
-    spread_bps = ((ask - bid) / mid) * 10_000 if mid > 0 else 100.0
-    liquidity = max(0.0, min(1.0, 1.0 - spread_bps / 100.0))
-    return liquidity, spread_bps
+    metrics = quote_spread_liquidity(bid=bid, ask=ask)
+    return metrics.liquidity_score, metrics.spread_bps
 
 
 def _strike_price(strike: float):
-    return nautilus_pyo3.Price.from_str(f"{strike:.2f}")
+    # Backwards compatible alias for existing imports/tests.
+    return strike_price(strike)
 
 
 def _strike_float(strike) -> float:  # noqa: ANN001
@@ -89,7 +90,7 @@ def _strike_float(strike) -> float:  # noqa: ANN001
 
 
 def _underlying_price(option_chain_slice, atm: float) -> float:  # noqa: ANN001
-    greeks = option_chain_slice.get_call_greeks(_strike_price(atm))
+    greeks = option_chain_slice.get_call_greeks(strike_price(atm))
     if greeks is not None and getattr(greeks, "underlying_price", None):
         return float(greeks.underlying_price)
     return atm
@@ -142,8 +143,8 @@ class IbStructureSelector:
         if high_strike <= low_strike:
             return None
 
-        low_quote = option_chain_slice.get_call_quote(_strike_price(low_strike))
-        high_quote = option_chain_slice.get_call_quote(_strike_price(high_strike))
+        low_quote = option_chain_slice.get_call_quote(strike_price(low_strike))
+        high_quote = option_chain_slice.get_call_quote(strike_price(high_strike))
         if low_quote is None or high_quote is None:
             return None
 
@@ -198,8 +199,8 @@ class IbStructureSelector:
             "expiry": self._expiry,
             "venue": self._venue,
         }
-        low_call = option_chain_slice.get_call(_strike_price(low_strike))
-        high_call = option_chain_slice.get_call(_strike_price(high_strike))
+        low_call = option_chain_slice.get_call(strike_price(low_strike))
+        high_call = option_chain_slice.get_call(strike_price(high_strike))
         leg_ids: list[str] = []
         for leg in (low_call, high_call):
             if leg is not None and hasattr(leg, "instrument_id"):
