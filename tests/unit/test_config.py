@@ -1,8 +1,8 @@
-from __future__ import annotations
-
 from pathlib import Path
 
-from nautilus_zerodte.config.loader import load_config
+import pytest
+
+from nautilus_zerodte.config.loader import _apply_env_overrides, _deep_merge, load_config
 from nautilus_zerodte.config.schema import AppConfig
 from nautilus_zerodte.models.enums import VenueAdapter
 
@@ -89,3 +89,66 @@ def test_resolved_journal_path_strips_runs_prefix() -> None:
     config = AppConfig(journal={"path": "runs/audit/trades.jsonl"})
     base = Path("/tmp/test_runs")
     assert config.resolved_journal_path(base) == base / "audit/trades.jsonl"
+
+
+def test_deep_merge_nested_dicts() -> None:
+    base = {"risk": {"version": "default", "max_net_delta": 10.0}, "dry_run": False}
+    overlay = {"risk": {"version": "conservative"}}
+    merged = _deep_merge(base, overlay)
+    assert merged["risk"]["version"] == "conservative"
+    assert merged["risk"]["max_net_delta"] == 10.0
+    assert merged["dry_run"] is False
+
+
+def test_apply_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("IB_HOST", "10.0.0.1")
+    monkeypatch.setenv("IB_PORT", "4002")
+    data = _apply_env_overrides({"ib": {"host": "127.0.0.1"}})
+    assert data["dry_run"] is True
+    assert data["ib"]["host"] == "10.0.0.1"
+    assert data["ib"]["port"] == 4002
+
+
+def test_selector_enabled_multi_strategy() -> None:
+    config = AppConfig(
+        strategies=[
+            {"strategy_id": "a", "underlying": "SPY.NYSE"},
+            {"strategy_id": "b", "underlying": "QQQ.NASDAQ"},
+        ]
+    )
+    assert config.selector_enabled() is True
+
+
+def test_selector_enabled_diversification_flag() -> None:
+    config = AppConfig(diversification={"enabled": True})
+    assert config.selector_enabled() is True
+
+
+def test_selector_disabled_single_strategy() -> None:
+    config = AppConfig()
+    assert config.selector_enabled() is False
+
+
+def test_per_strategy_reference_override() -> None:
+    from nautilus_zerodte.config.schema import resolved_option_series_id
+
+    config = AppConfig(
+        reference={"option_series_id": "GLOBAL"},
+        strategies=[
+            {
+                "strategy_id": "a",
+                "underlying": "SPY.NYSE",
+                "reference": {"option_series_id": "SPY"},
+            },
+        ],
+    )
+    runtime = config.resolved_strategies()[0]
+    assert (
+        resolved_option_series_id(
+            config,
+            underlying=runtime.underlying,
+            reference=runtime.reference,
+        )
+        == "SPY"
+    )

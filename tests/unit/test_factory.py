@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from nautilus_trader.model.data import QuoteTick
+from nautilus_trader.model.identifiers import InstrumentId
+
 from nautilus_zerodte.config.schema import AppConfig
 from nautilus_zerodte.node.factory import (
+    _actor_configs,
+    _backtest_data_configs,
     _backtest_fee_model,
     _backtest_venue_config,
     _strategy_config,
@@ -82,3 +88,43 @@ def test_ib_backtest_fixed_fee_model_wired() -> None:
 
     venue = _backtest_venue_config(config)
     assert venue.fee_model is not None
+
+
+def test_selector_actor_registered_when_multi_strategy() -> None:
+    config = AppConfig(
+        strategies=[
+            {"strategy_id": "a", "underlying": "SPY.NYSE"},
+            {"strategy_id": "b", "underlying": "QQQ.NASDAQ"},
+        ]
+    )
+    actors = _actor_configs(config)
+    assert any("selector" in actor.actor_path for actor in actors)
+
+
+def test_backtest_data_configs_quote_only_for_skeleton() -> None:
+    catalog = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "catalog"
+    if not catalog.exists():
+        pytest.skip("Catalog fixture not built")
+    config = AppConfig(
+        strategy={"strategy_class": "skeleton", "underlying": "BTC-PERPETUAL.DERIBIT"},
+        venue={"adapter": "DERIBIT", "name": "DERIBIT"},
+    )
+    instrument_id = InstrumentId.from_str("BTC-PERPETUAL.DERIBIT")
+    configs = _backtest_data_configs(config, catalog, instrument_id, 0, 1_000_000_000)
+    assert len(configs) == 1
+    assert configs[0].instrument_id == instrument_id
+
+
+def test_backtest_data_configs_option_chain_for_reference() -> None:
+    catalog = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "catalog"
+    if not catalog.exists():
+        pytest.skip("Catalog fixture not built")
+    config = AppConfig(
+        strategy={"strategy_class": "reference", "underlying": "BTC-PERPETUAL.DERIBIT"},
+        venue={"adapter": "DERIBIT", "name": "DERIBIT"},
+        reference={"backtest_plumbing": False},
+    )
+    instrument_id = InstrumentId.from_str("BTC-PERPETUAL.DERIBIT")
+    configs = _backtest_data_configs(config, catalog, instrument_id, 0, 1_000_000_000)
+    assert len(configs) >= 1
+    assert any("OptionGreeks" in str(cfg.data_cls) for cfg in configs)

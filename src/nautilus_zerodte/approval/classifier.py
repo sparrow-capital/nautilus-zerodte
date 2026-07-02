@@ -1,21 +1,13 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
-
+from nautilus_zerodte.config.schema import ApprovalConfig
 from nautilus_zerodte.models.enums import ActorKind
 from nautilus_zerodte.models.trade_intent import TradeIntent
 
-
-class ApprovalThresholds(BaseModel):
-    """Thresholds for routing intents to human vs automation approval."""
-
-    model_config = ConfigDict(frozen=True)
-
-    human_notional_threshold: float = 10_000.0
-    human_edge_bps_threshold: float = 50.0
+ApprovalThresholds = ApprovalConfig
 
 
-def classify_intent(intent: TradeIntent, thresholds: ApprovalThresholds) -> ActorKind:
+def classify_intent(intent: TradeIntent, thresholds: ApprovalConfig) -> ActorKind:
     """Route large or high-edge trades to human approval; otherwise automation."""
     if intent.edge_after_cost_bps >= thresholds.human_edge_bps_threshold:
         return ActorKind.HUMAN

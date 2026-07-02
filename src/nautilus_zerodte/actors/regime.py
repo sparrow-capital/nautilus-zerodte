@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from collections.abc import Sequence
+
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ActorConfig
 from nautilus_trader.model.identifiers import InstrumentId
@@ -21,7 +23,7 @@ def compute_regime_tag(
     mid: float,
     *,
     open_price: float | None,
-    recent_prices: list[float],
+    recent_prices: Sequence[float],
     trend_move_pct: float,
     chop_range_pct: float,
     pin_strike_proximity_pct: float,
@@ -71,7 +73,7 @@ class RegimeActor(Actor):
         return compute_regime_tag(
             mid,
             open_price=self._open_price,
-            recent_prices=list(self._prices),
+            recent_prices=self._prices,
             trend_move_pct=self.config.trend_move_pct,
             chop_range_pct=self.config.chop_range_pct,
             pin_strike_proximity_pct=self.config.pin_strike_proximity_pct,

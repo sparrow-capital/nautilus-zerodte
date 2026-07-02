@@ -7,7 +7,7 @@ import typer
 
 from nautilus_zerodte.config.loader import load_config
 from nautilus_zerodte.config.schema import StreamCaptureConfig
-from nautilus_zerodte.journal.service import Journal
+from nautilus_zerodte.journal.service import Journal, gate_rejection_report, journal_overview
 from nautilus_zerodte.models.enums import GateStage
 from nautilus_zerodte.node.factory import build_trading_node, run_backtest
 from nautilus_zerodte.node.streaming import convert_stream_catalog
@@ -202,39 +202,18 @@ def journal_report(
     path: Path = typer.Option(..., "--path", "-p", help="JSONL journal file."),
 ) -> None:
     """Report gate failures by stage and breached rule — for policy tuning."""
-    entries = Journal.load(path)
-    gate_stages = {
-        GateStage.EDGE,
-        GateStage.LIQUIDITY,
-        GateStage.REGIME,
-        GateStage.SESSION,
-        GateStage.GREEK,
-        GateStage.OPERATIONAL,
-        GateStage.RISK_ENGINE,
-    }
-    by_stage: dict[str, int] = {}
-    by_rule: dict[str, int] = {}
-
-    for entry in entries:
-        if entry.stage not in gate_stages:
-            continue
-        if entry.payload.get("event") not in {"GATE_REJECT", "ORDER_DENIED"}:
-            continue
-        by_stage[entry.stage.value] = by_stage.get(entry.stage.value, 0) + 1
-        for rule in entry.payload.get("breached_rules", []):
-            by_rule[str(rule)] = by_rule.get(str(rule), 0) + 1
-
+    report = gate_rejection_report(Journal.load(path))
     typer.echo(f"Gate rejection report: {path}")
-    typer.echo(f"Total rejections: {sum(by_stage.values())}")
-    if by_stage:
+    typer.echo(f"Total rejections: {report.total}")
+    if report.by_stage:
         typer.echo("\nBy stage:")
-        for stage, count in sorted(by_stage.items()):
+        for stage, count in sorted(report.by_stage.items()):
             typer.echo(f"  {stage}: {count}")
-    if by_rule:
+    if report.by_rule:
         typer.echo("\nBy breached rule:")
-        for rule, count in sorted(by_rule.items(), key=lambda x: (-x[1], x[0])):
+        for rule, count in sorted(report.by_rule.items(), key=lambda x: (-x[1], x[0])):
             typer.echo(f"  {rule}: {count}")
-    if not by_stage and not by_rule:
+    if not report.by_stage and not report.by_rule:
         typer.echo("No gate rejections found.")
 
 
@@ -243,42 +222,22 @@ def journal_summary(
     path: Path = typer.Option(..., "--path", "-p", help="JSONL journal file."),
 ) -> None:
     """Summarize journal entries by stage, gate rejections, and recent events."""
-    entries = Journal.load(path)
-    stage_counts: dict[str, int] = {}
-    gate_rejections: dict[str, int] = {}
-    strategies: set[str] = set()
-
-    gate_stages = {
-        GateStage.EDGE,
-        GateStage.LIQUIDITY,
-        GateStage.REGIME,
-        GateStage.SESSION,
-        GateStage.GREEK,
-        GateStage.OPERATIONAL,
-    }
-
-    for entry in entries:
-        stage_counts[entry.stage.value] = stage_counts.get(entry.stage.value, 0) + 1
-        if entry.strategy_id:
-            strategies.add(entry.strategy_id)
-        if entry.stage in gate_stages and entry.payload.get("event") == "GATE_REJECT":
-            gate_rejections[entry.stage.value] = gate_rejections.get(entry.stage.value, 0) + 1
-
+    overview = journal_overview(Journal.load(path))
     typer.echo(f"Journal: {path}")
-    typer.echo(f"Total entries: {len(entries)}")
-    if strategies:
-        typer.echo(f"Strategies: {', '.join(sorted(strategies))}")
+    typer.echo(f"Total entries: {overview.total}")
+    if overview.strategies:
+        typer.echo(f"Strategies: {', '.join(sorted(overview.strategies))}")
     typer.echo("Stage counts:")
-    for stage, count in sorted(stage_counts.items()):
+    for stage, count in sorted(overview.stage_counts.items()):
         typer.echo(f"  {stage}: {count}")
 
-    if gate_rejections:
+    if overview.gate_rejections:
         typer.echo("\nGate rejections:")
-        for stage, count in sorted(gate_rejections.items()):
+        for stage, count in sorted(overview.gate_rejections.items()):
             typer.echo(f"  {stage}: {count}")
 
     typer.echo("\nLast 10 entries:")
-    for entry in entries[-10:]:
+    for entry in overview.last_entries:
         event = entry.payload.get("event", "")
         breached = entry.payload.get("breached_rules")
         extra = f" rules={breached}" if breached else ""

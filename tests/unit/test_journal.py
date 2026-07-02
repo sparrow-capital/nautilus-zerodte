@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from nautilus_zerodte.journal.service import Journal
+from nautilus_zerodte.journal.service import Journal, gate_rejection_report, journal_overview
 from nautilus_zerodte.models.enums import GateStage
 
 
@@ -46,3 +46,35 @@ def test_journal_jsonl_is_valid_json(tmp_path: Path) -> None:
     parsed = json.loads(line)
     assert parsed["stage"] == "LIFECYCLE"
     assert parsed["payload"]["event"] == "NODE_START"
+
+
+def test_gate_rejection_report_aggregates(tmp_path: Path) -> None:
+    journal = Journal(tmp_path / "report.jsonl")
+    journal.record(
+        GateStage.EDGE,
+        payload={"event": "GATE_REJECT", "breached_rules": ["min_edge", "min_liquidity"]},
+    )
+    journal.record(
+        GateStage.RISK_ENGINE,
+        payload={"event": "ORDER_DENIED", "breached_rules": ["max_delta"]},
+    )
+    journal.record(GateStage.LIFECYCLE, payload={"event": "NODE_START"})
+
+    report = gate_rejection_report(Journal.load(journal.path))
+    assert report.total == 2
+    assert report.by_stage["EDGE"] == 1
+    assert report.by_stage["RISK_ENGINE"] == 1
+    assert report.by_rule["min_edge"] == 1
+    assert report.by_rule["max_delta"] == 1
+
+
+def test_journal_overview_aggregates(tmp_path: Path) -> None:
+    journal = Journal(tmp_path / "summary.jsonl")
+    journal.record(GateStage.LIFECYCLE, payload={"event": "NODE_START"}, strategy_id="a")
+    journal.record(GateStage.EDGE, payload={"event": "GATE_REJECT"}, strategy_id="a")
+
+    overview = journal_overview(Journal.load(journal.path))
+    assert overview.total == 2
+    assert overview.strategies == frozenset({"a"})
+    assert overview.gate_rejections["EDGE"] == 1
+    assert len(overview.last_entries) == 2

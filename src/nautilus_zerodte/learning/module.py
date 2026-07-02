@@ -18,6 +18,69 @@ def _money_decimal(value: Any) -> Decimal:
     return Decimal(str(value))
 
 
+def _compute_slippage(fill_px: float, entry_mid: float) -> float:
+    if entry_mid <= 0:
+        return 0.0
+    return abs(fill_px - entry_mid) / entry_mid * 10_000
+
+
+def _decompose_greek_pnl(
+    greeks: dict[str, float],
+    *,
+    underlying_move: float,
+    iv_move: float,
+    hold_hours: float,
+) -> tuple[Decimal, Decimal, Decimal]:
+    theta = greeks.get("theta", 0.0)
+    gamma = greeks.get("gamma", 0.0)
+    vega = greeks.get("vega", 0.0)
+    return (
+        Decimal(str(theta * hold_hours / 24)),
+        Decimal(str(0.5 * gamma * underlying_move * underlying_move)),
+        Decimal(str(vega * iv_move)),
+    )
+
+
+def _build_learning_record(
+    *,
+    intent_id: UUID,
+    intent: TradeIntent | None,
+    event: Any,
+    fill_px: float,
+    fill_qty: float,
+    commission: Decimal,
+    slippage_bps: float,
+    theta_pnl: Decimal,
+    gamma_pnl: Decimal,
+    vega_pnl: Decimal,
+    realized_pnl: Decimal,
+) -> LearningRecord:
+    entry_notional = fill_px * fill_qty if fill_px > 0 and fill_qty > 0 else 0.0
+    edge_predicted = intent.edge_after_cost_bps if intent else 0.0
+    edge_realized = (
+        float(realized_pnl / Decimal(str(entry_notional))) * 10_000 if entry_notional > 0 else 0.0
+    )
+    order_id_raw = getattr(event, "client_order_id", None)
+    return LearningRecord(
+        intent_id=intent_id,
+        order_id=str(order_id_raw) if order_id_raw is not None else None,
+        realized_pnl=realized_pnl,
+        theta_pnl=theta_pnl,
+        gamma_pnl=gamma_pnl,
+        vega_pnl=vega_pnl,
+        slippage_bps=slippage_bps,
+        commission=commission,
+        edge_predicted_bps=edge_predicted,
+        edge_realized_bps=edge_realized,
+        features={
+            "instrument_id": str(getattr(event, "instrument_id", "")),
+            "fill_price": fill_px,
+            "fill_qty": fill_qty,
+            "entry_notional": entry_notional,
+        },
+    )
+
+
 class LearningModule:
     """Rule-based fill attribution — commission, slippage, greek decomposition."""
 
@@ -58,47 +121,29 @@ class LearningModule:
 
         fill_px = float(event.last_px)
         fill_qty = float(event.last_qty)
-        entry_notional = fill_px * fill_qty if fill_px > 0 and fill_qty > 0 else 0.0
-
         commission = _money_decimal(getattr(event, "commission", None))
-
         entry_mid = self._entry_mids.get(resolved_intent_id, fill_px)
-        slippage_bps = 0.0
-        if entry_mid > 0:
-            slippage_bps = abs(fill_px - entry_mid) / entry_mid * 10_000
-
+        slippage_bps = _compute_slippage(fill_px, entry_mid)
         greeks = self._entry_greeks.get(resolved_intent_id, {})
-        theta = greeks.get("theta", 0.0)
-        gamma = greeks.get("gamma", 0.0)
-        vega = greeks.get("vega", 0.0)
-        theta_pnl = Decimal(str(theta * hold_hours / 24))
-        gamma_pnl = Decimal(str(0.5 * gamma * underlying_move * underlying_move))
-        vega_pnl = Decimal(str(vega * iv_move))
-
-        realized = realized_pnl if realized_pnl is not None else Decimal("0")
-        edge_predicted = intent.edge_after_cost_bps if intent else 0.0
-        edge_realized = (
-            float(realized / Decimal(str(entry_notional))) * 10_000 if entry_notional > 0 else 0.0
+        theta_pnl, gamma_pnl, vega_pnl = _decompose_greek_pnl(
+            greeks,
+            underlying_move=underlying_move,
+            iv_move=iv_move,
+            hold_hours=hold_hours,
         )
-
-        order_id_raw = getattr(event, "client_order_id", None)
-        record = LearningRecord(
+        realized = realized_pnl if realized_pnl is not None else Decimal("0")
+        record = _build_learning_record(
             intent_id=resolved_intent_id,
-            order_id=str(order_id_raw) if order_id_raw is not None else None,
-            realized_pnl=realized,
+            intent=intent,
+            event=event,
+            fill_px=fill_px,
+            fill_qty=fill_qty,
+            commission=commission,
+            slippage_bps=slippage_bps,
             theta_pnl=theta_pnl,
             gamma_pnl=gamma_pnl,
             vega_pnl=vega_pnl,
-            slippage_bps=slippage_bps,
-            commission=commission,
-            edge_predicted_bps=edge_predicted,
-            edge_realized_bps=edge_realized,
-            features={
-                "instrument_id": str(getattr(event, "instrument_id", "")),
-                "fill_price": fill_px,
-                "fill_qty": fill_qty,
-                "entry_notional": entry_notional,
-            },
+            realized_pnl=realized,
         )
         self._journal.record(
             GateStage.LEARNING,

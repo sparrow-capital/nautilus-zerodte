@@ -16,7 +16,7 @@ from nautilus_zerodte.actors.data_types import (
     snapshot_to_trade_intent,
     trade_intent_to_snapshot,
 )
-from nautilus_zerodte.approval.classifier import ApprovalThresholds, classify_intent
+from nautilus_zerodte.approval.classifier import ApprovalConfig, classify_intent
 from nautilus_zerodte.approval.handlers import AutomationHandler, HumanApprovalHandler
 from nautilus_zerodte.journal.service import Journal
 from nautilus_zerodte.models.diversification import DiversificationPolicy, select_intents
@@ -40,7 +40,7 @@ class SelectorActor(Actor):
         policy_data = config.diversification or {}
         self._policy = DiversificationPolicy.model_validate(policy_data)
         approval_data = config.approval or {}
-        self._approval_thresholds = ApprovalThresholds.model_validate(approval_data)
+        self._approval_thresholds = ApprovalConfig.model_validate(approval_data)
         self._human_handler = HumanApprovalHandler(self._journal)
         self._automation_handler = AutomationHandler(self._journal)
         self._buffer: list[TradeIntent] = []

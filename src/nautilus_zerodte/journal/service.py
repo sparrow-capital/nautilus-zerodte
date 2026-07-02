@@ -5,8 +5,89 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from dataclasses import dataclass
+
 from nautilus_zerodte.models.enums import GateStage
 from nautilus_zerodte.models.journal import JournalEntry
+
+_REPORT_GATE_STAGES = {
+    GateStage.EDGE,
+    GateStage.LIQUIDITY,
+    GateStage.REGIME,
+    GateStage.SESSION,
+    GateStage.GREEK,
+    GateStage.OPERATIONAL,
+    GateStage.RISK_ENGINE,
+}
+
+_SUMMARY_GATE_STAGES = {
+    GateStage.EDGE,
+    GateStage.LIQUIDITY,
+    GateStage.REGIME,
+    GateStage.SESSION,
+    GateStage.GREEK,
+    GateStage.OPERATIONAL,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class GateRejectionReport:
+    by_stage: dict[str, int]
+    by_rule: dict[str, int]
+
+    @property
+    def total(self) -> int:
+        return sum(self.by_stage.values())
+
+
+@dataclass(frozen=True, slots=True)
+class JournalOverview:
+    stage_counts: dict[str, int]
+    gate_rejections: dict[str, int]
+    strategies: frozenset[str]
+    last_entries: tuple[JournalEntry, ...]
+
+    @property
+    def total(self) -> int:
+        return sum(self.stage_counts.values())
+
+
+def gate_rejection_report(entries: list[JournalEntry]) -> GateRejectionReport:
+    """Aggregate gate rejections and order denials by stage and breached rule."""
+    by_stage: dict[str, int] = {}
+    by_rule: dict[str, int] = {}
+
+    for entry in entries:
+        if entry.stage not in _REPORT_GATE_STAGES:
+            continue
+        if entry.payload.get("event") not in {"GATE_REJECT", "ORDER_DENIED"}:
+            continue
+        by_stage[entry.stage.value] = by_stage.get(entry.stage.value, 0) + 1
+        for rule in entry.payload.get("breached_rules", []):
+            by_rule[str(rule)] = by_rule.get(str(rule), 0) + 1
+
+    return GateRejectionReport(by_stage=by_stage, by_rule=by_rule)
+
+
+def journal_overview(entries: list[JournalEntry]) -> JournalOverview:
+    """Summarize journal entries by stage, gate rejections, and recent tail."""
+    stage_counts: dict[str, int] = {}
+    gate_rejections: dict[str, int] = {}
+    strategies: set[str] = set()
+
+    for entry in entries:
+        stage_counts[entry.stage.value] = stage_counts.get(entry.stage.value, 0) + 1
+        if entry.strategy_id:
+            strategies.add(entry.strategy_id)
+        if entry.stage in _SUMMARY_GATE_STAGES and entry.payload.get("event") == "GATE_REJECT":
+            gate_rejections[entry.stage.value] = gate_rejections.get(entry.stage.value, 0) + 1
+
+    return JournalOverview(
+        stage_counts=stage_counts,
+        gate_rejections=gate_rejections,
+        strategies=frozenset(strategies),
+        last_entries=tuple(entries[-10:]),
+    )
 
 
 class Journal:

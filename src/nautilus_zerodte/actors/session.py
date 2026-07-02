@@ -71,8 +71,13 @@ class SessionActor(Actor):
         return not self.allows_entry()
 
     def _publish_phase(self) -> None:
-        minutes = self.minutes_to_expiry()
-        allows = self.allows_entry()
+        now = self.clock.utc_now()
+        minutes = minutes_to_close(now, self._close_time)
+        allows = session_allows_entry(
+            now,
+            self._close_time,
+            blackout_minutes_before_close=self.config.blackout_minutes_before_close,
+        )
         phase = session_phase_label(allows)
         self.msgbus.publish(
             SESSION_PHASE_TOPIC,
