@@ -79,3 +79,7 @@ variable overrides** applied in `src/nautilus_zerodte/config/loader.py`:
 
 For a higher-level overview of wiring and the strategy/selector flow, see
 `docs/architecture.md`.
+
+## Author
+
+Akash Mahalik (<akashmahalik@gmail.com>)
