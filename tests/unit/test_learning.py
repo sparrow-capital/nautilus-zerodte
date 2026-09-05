@@ -10,8 +10,8 @@ import pytest
 from nautilus_zerodte.journal.service import Journal
 from nautilus_zerodte.learning.module import (
     LearningModule,
-    _decompose_greek_pnl,
     _compute_slippage,
+    _decompose_greek_pnl,
 )
 from nautilus_zerodte.models.enums import GateStage
 from nautilus_zerodte.models.trade_intent import TradeIntent

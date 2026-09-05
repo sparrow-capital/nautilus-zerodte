@@ -79,9 +79,11 @@ def test_dry_run_journals_intent_without_submit(tmp_path: Path) -> None:
         risk_policy=RiskPolicy(),
     )
 
-    with patch.object(strategy, "submit_entry") as mock_submit, patch.object(
-        strategy, "_portfolio_greek_snapshot", return_value=greeks
-    ), patch.object(strategy, "_build_gate_context", return_value=gate_context):
+    with (
+        patch.object(strategy, "submit_entry") as mock_submit,
+        patch.object(strategy, "_portfolio_greek_snapshot", return_value=greeks),
+        patch.object(strategy, "_build_gate_context", return_value=gate_context),
+    ):
         strategy._transition(StrategyState.EVALUATING, reason="test")
         strategy._run_gate_pipeline(intent, context)
         mock_submit.assert_not_called()

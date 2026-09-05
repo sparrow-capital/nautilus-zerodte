@@ -38,8 +38,5 @@ def deribit_edge_after_cost_bps(
     half_spread_bps = (low_spread_bps + high_spread_bps) / 2
     commission_bps = expected_commission_bps(notional=net_debit, fee_schedule=fee_schedule)
     return (
-        edge_before_cost_bps
-        - half_spread_bps
-        - fee_schedule.expected_slippage_bps
-        - commission_bps
+        edge_before_cost_bps - half_spread_bps - fee_schedule.expected_slippage_bps - commission_bps
     )

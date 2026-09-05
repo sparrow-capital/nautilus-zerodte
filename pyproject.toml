@@ -5,7 +5,7 @@ description = "0DTE options extension for NautilusTrader: gates, greek policy, v
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "nautilus-trader[deribit,ib]>=1.229.0a0",
+    "nautilus-trader[ib]==1.229.0",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
     "typer>=0.26.7",
@@ -22,6 +22,11 @@ dev = [
 
 [tool.uv]
 prerelease = "allow"
+# Security floor: protobuf < 5.29.6 is vulnerable to a JSON recursion depth
+# bypass (GHSA-7gcm-g887-7qv7). protobuf reaches us transitively via the
+# nautilus-trader "ib" extra, so pin the floor here rather than relying on
+# whatever that extra happens to resolve to.
+constraint-dependencies = ["protobuf>=5.29.6"]
 
 [tool.uv.sources]
 nautilus-trader = { index = "nautech" }

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import deque
-
 from collections.abc import Sequence
 
 from nautilus_trader.common.actor import Actor

@@ -1,7 +1,7 @@
 # nautilus-zerodte
 
 Greek-aware **0DTE options** trading as a thin extension on
-[NautilusTrader](https://nautilustrader.io/) — same strategies for backtest and live.
+[NautilusTrader](https://nautilustrader.io/) - same strategies for backtest and live.
 
 **What this is:** layered trade gates (edge, liquidity, regime, session, greeks),
 strategy FSM, venue adapters (Deribit primary, Interactive Brokers secondary),
@@ -40,7 +40,7 @@ uv run nautilus-zerodte backtest \
   --config configs/profiles/backtest_btc.yaml \
   --catalog tests/fixtures/catalog_deribit
 
-# Paper node (dry-run — no live orders)
+# Paper node (dry-run - no live orders)
 uv run nautilus-zerodte paper \
   --config configs/profiles/paper_btc.yaml \
   --dry-run
@@ -53,13 +53,14 @@ uv run nautilus-zerodte journal summary --path runs/latest.jsonl
 
 | Path | Purpose |
 | --- | --- |
-| `src/nautilus_zerodte/gates/` | Pre-trade gate evaluation (edge → greek) |
+| `src/nautilus_zerodte/gates/` | Pre-trade gate evaluation (edge -> greek) |
 | `src/nautilus_zerodte/actors/` | Session blackout, regime tags |
 | `src/nautilus_zerodte/strategies/` | 0DTE FSM, reference strategy, venue spread selectors |
 | `src/nautilus_zerodte/node/adapters/` | Deribit / IB venue wiring |
 | `src/nautilus_zerodte/journal/` | JSONL audit trail |
 | `configs/profiles/` | Paper and backtest profiles per venue |
 | `docs/design/` | Architecture diagrams and NT capability mapping |
+| `docs/` | Tenets, engineering rules, quant protocols, decisions (start at `INDEX.md`) |
 
 ## Environment overrides (runtime contract)
 

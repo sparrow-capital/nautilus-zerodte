@@ -37,6 +37,7 @@ def build_deribit_wiring(config: AppConfig, *, dry_run: bool) -> VenueClientWiri
         DeribitLiveDataClientFactory,
         DeribitLiveExecClientFactory,
     )
+
     # Use string primitives so TradingNodeConfig can be JSON-encoded for streaming.
     environment = "TESTNET" if config.deribit.testnet else "MAINNET"
     product_types = ("OPTION", "FUTURE")

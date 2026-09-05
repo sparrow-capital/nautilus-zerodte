@@ -33,7 +33,6 @@ def deribit_option_series_id(
     expiry_time_utc: str = "08:00",
 ):
     """Build OptionSeriesId aligned with Deribit daily option expiry."""
-    from nautilus_trader.model.data import nautilus_pyo3
 
     return nautilus_pyo3.OptionSeriesId(
         "DERIBIT",
