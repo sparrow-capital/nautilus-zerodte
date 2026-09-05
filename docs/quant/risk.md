@@ -20,7 +20,27 @@ Every row needs a test that **trips** it. A limit with no test does not exist.
 | Data staleness halt | Gate context | Stale snapshot rejects rather than trades |
 | Reconciliation mismatch halt | Node startup and reconnect | Mismatch halts and journals; never auto-corrects |
 | Max orders and notional per minute | Adapter or risk actor | Rate breach rejects and journals |
-| Kill switch (file, signal, or CLI) | Node | Flattens and stops within one bar |
+| Operator kill switch | **NOT IMPLEMENTED** - see `docs/killswitch_plan.md` | No test can trip it, because there is nothing to trip |
+
+**What does not exist, stated plainly.** There is no file trigger, no signal trigger and no CLI
+trigger for an operator flatten. `nautilus-zerodte flatten` appends a `FLATTEN_REQUEST` line to the
+journal, prints, and exits 0; nothing in `src/` reads that event. NautilusTrader does claim SIGTERM,
+SIGINT and SIGABRT on the live loop and routes them to `TradingNode.stop()`, but
+`StrategyConfig.manage_stop` is left at its default of `False`, so a stop flattens nothing. The
+only flatten that is wired at all is time-triggered (`SessionActor` blackout), and it is itself
+broken: `strategies/base.py` calls `self.cancel_all_orders()` with no argument while NautilusTrader
+declares `cancel_all_orders(self, InstrumentId instrument_id, ...)` with no default
+(`trading/strategy.pxd:162`), which is a hard `TypeError` on the pinned 1.229.0. It has never been
+reached because it needs a strategy actually in a position, and no test puts one there.
+
+"Within one bar", the old wording, was also unachievable as written: there are no bars anywhere in
+this system - both fixture catalogs carry quote ticks and greeks only - so any real bound is a
+timeout, not a bar.
+
+**Rows above marked "Risk actor" are also unbuilt.** No risk actor exists in `src/`. The daily loss
+limit, the consecutive-loss breaker, the margin ceiling and the reconciliation halt are all
+specifications, not controls. This table describes the intended guardrail set; git and the tests are
+the record of what is enforced today.
 
 **Guardrails fail closed and never auto-reset.** Resuming after a breaker is a human action, by a
 different process than the one that tripped it. A breaker that clears itself is a delay, not a
