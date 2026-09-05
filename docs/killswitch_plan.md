@@ -72,15 +72,19 @@ EACH STRATEGY - `_on_halt(msg)` -> `_latch_halt(reason, token, source)`, synchro
   S5. `try: self.flatten_positions(reason=f"operator_halt:{reason}")`
       `except Exception as e: journal HALT_EXIT_FAILED at ERROR; publish HaltAck(flat=False); return`. Fail closed: still latched, still no intake, and the ack explicitly says NOT flat so the CLI exits 3.
 
-INSIDE `flatten_positions` -> `market_exit()`, NT then, per instrument it holds orders or positions for: `cancel_all_orders(instrument_id)` THEN `close_all_positions(instrument_id, tags=[MARKET_EXIT], reduce_only=True)`. Cancel-before-close is NT's own loop ordering (strategy.pyx:1797-1799), not ours - we do not assert on it, because asserting on someone else's implementation tells us nothing about our code.
+INSIDE `flatten_positions`, NT's `market_exit()` then, per instrument it holds orders or positions for: `cancel_all_orders(instrument_id)` THEN `close_all_positions(instrument_id, tags=[MARKET_EXIT], reduce_only=True)`. Cancel-before-close is NT's own loop ordering (strategy.pyx:1797-1799), not ours - we do not assert on it, because asserting on someone else's implementation tells us nothing about our code.
+
+  **AMENDED 2026-09-06:** that loop is not sufficient, and on a Deribit combo it does nothing at all. `market_exit` builds its instrument set from `cache.positions_open()` plus open and in-flight orders (strategy.pyx:1780-1794), and NT creates NO `Position` for a spread fill (execution/engine.pyx:1653; docs/concepts/positions.md:445 states it), so a filled combo whose orders have all completed contributes nothing to the set. `flatten_positions` therefore runs the combo-first close sequence of H3.1 against its own `OrderFilled`-sourced exposure record (H3.2), with `market_exit` covering only the non-spread instruments, and legs out short-leg-first (H3.3) when the combo close is unavailable. See D11 and D12.
 
   S6. `on_market_exit()` override, called by NT at the start: journal `FLATTEN_START` with the instrument set and the three cache counts.
   S7. `post_market_exit()` override, called by NT on completion OR on max-attempts give-up:
         residual_open      = len(cache.orders_open(None, None, self.id))
         residual_inflight  = len(cache.orders_inflight(None, None, self.id))
         residual_positions = len(cache.positions_open(None, None, self.id))
+        residual_spread    = our own OrderFilled-sourced exposure record (H3.2), because
+                             `positions_open` is structurally blind to spread instruments
         portfolio_flat     = self.portfolio.is_completely_flat()
-      All three zero AND portfolio_flat -> journal `FLATTEN_COMPLETE {flat: true, counts}` at INFO, publish HaltAck(flat=True).
+      All four zero AND portfolio_flat -> journal `FLATTEN_COMPLETE {flat: true, counts}` at INFO, publish HaltAck(flat=True).
       Otherwise -> journal `FLATTEN_COMPLETE {flat: false, counts}` at ERROR, publish HaltAck(flat=False). NO re-arm: NT already retried `market_exit_max_attempts` times and gave up. Escalation is a human.
   S8. `on_order_filled`, first guard: if `self._halted`, journal `HALT_LATE_FILL` at WARN and do NOT transition out of the halted path. Separately (and independent of halt), the EXITING -> FLAT transition now requires the cache to report zero open positions and zero open/inflight orders for this strategy; a partial fill on a multi-leg exit journals `PARTIAL_EXIT_FILL` and stays EXITING.
 
@@ -107,22 +111,29 @@ THE PROPERTY THIS BUYS, stated exactly: zero journal entries whose event is in {
 | H0 | Runs-dir env seam and the tests/ tripwire (stops pytest writing the operational audit trail) | medium | DONE e9900ca |
 | H1 | Journal.load tolerates a torn trailing line | small | DONE deec460 |
 | H2 | Truth-first documentation correction: risk.md, decisions D8, and the stale state diagram | small | not started |
-| H3 | Route flatten through NT market_exit, verify flat, and stop asserting flatness from the first fill | large | not started |
+| H3 | Combo-first flatten with short-leg-first fallback, exposure sourced from OrderFilled, and verified flatness | large | not started (REWRITTEN 2026-09-06 - the old market_exit-only approach is dead, see D11) |
 | H4 | Halt trip-file service, bus contract and config (no NT import, no behaviour yet) | medium | not started |
 | H5 | Strategy halt latch, intake guards, and the startup pre-check | large | not started |
 | H6 | HaltActor: poll, trip, republish, aggregate acks (and prove it does not shut the node down) | medium | not started |
 | H7 | Operator CLI: halt blocks and its exit code means something (the reported defect) | medium | not started |
 | H8 | Failure-injection integration tests, the anti-vacuity control, CI, and the final risk.md row | large | not started |
 | H9 | manage_stop in the paper and live profiles only, as its own commit | small | not started |
-| H2.5 | Record the unverified Deribit combo-position assumption as a blocking precondition for H3 | small | not started |
+| H2.5 | Record the Deribit combo-position finding, and run the two probes that close the residual, before H3 lands | small | RESEARCHED 2026-09-06, probes not run |
 
 **H2.5 was added 2026-09-06 by Akash** after review. `strategies/reference.py:150-167`
 trades the Deribit combo as ONE instrument (the vertical is already atomic); the perp hedge
 is a second instrument. NT's `market_exit` iterates a `cdef set[InstrumentId]`, so unwind
-order is nondeterministic. It is UNVERIFIED whether Deribit reports a combo fill as one
-position on the combo or decomposes it into two leg positions. If it decomposes, closing
-the long leg first leaves a NAKED SHORT CALL - unbounded loss. Settle this on testnet
-(open a combo, inspect `cache.positions_open()`, record one-vs-two) BEFORE H3 lands.
+order is nondeterministic. If Deribit decomposes a combo fill into two leg positions, closing
+the long leg first leaves a NAKED SHORT CALL - unbounded loss.
+
+**Researched 2026-09-06, and the answer moved the whole task.** The venue almost certainly
+holds **two leg positions** (92%, with a real residual 8% - see H3.0 for what carries it and
+what does not). But the finding that actually matters is neither answer: **NautilusTrader
+creates no `Position` at all for a spread fill**, so `market_exit` is blind to a filled combo
+and the original H3 approach would have flattened nothing while reporting success. H3 is
+rewritten accordingly. The remaining probes are in H3.5, and short-leg-first ordering (H3.3,
+D12) removes the naked-short hazard regardless of how the venue question resolves - which is
+why this task no longer BLOCKS H3, only informs it.
 
 ### H0 - Runs-dir env seam and the tests/ tripwire (stops pytest writing the operational audit trail)  [DONE e9900ca]
 
@@ -181,39 +192,349 @@ Create tests/unit/test_docs.py with a single narrowly scoped content test.
 
 **Risk.** A content test over prose is brittle to rewording. Keep the assertions to the two specific substrings and the enum-name set, not to sentence shapes.
 
-### H3 - Route flatten through NT market_exit, verify flat, and stop asserting flatness from the first fill  [not started]
+### H3 - Combo-first flatten with short-leg-first fallback, exposure sourced from OrderFilled, and verified flatness  [not started]
 
-**Why.** `self.cancel_all_orders()` at strategies/base.py:236 is a hard TypeError against the pinned 1.229.0 - `cancel_all_orders` declares `instrument_id` positionally with no default (trading/strategy.pxd:162, verified). It is the FIRST executable statement of the acting branch, so the session-blackout flatten raises before the EXITING transition and before `submit_exit`, on every tick, with a live position, and the exception escapes into the SessionActor's tick handler because msgbus publish is synchronous and NT re-raises from `handle_quote_tick`. Nothing in tests/ touches `flatten_positions` at all, which is why this has sat there. This task must land before the kill switch, because the kill switch calls exactly this method - wiring an operator control to a broken flatten reproduces the false confidence being fixed.
+**REWRITTEN 2026-09-06** after the Deribit combo research (findings archived in the commit
+message for this change; summary below). The original H3 said "route flatten through NT
+`market_exit`, verify flat". That approach is dead as a primary path. `market_exit` cannot see a
+filled combo at all, so wiring the kill switch to it would have produced a flatten that reports
+success and closes nothing - the same false-confidence defect this whole plan exists to remove.
+Nothing here is implemented; the STATUS banner at the top of this file still holds.
 
-**Files.** `src/nautilus_zerodte/strategies/base.py`, `tests/unit/test_reference_strategy.py`, `tests/integration/test_session_flatten_backtest.py`, `docs/quant/risk.md`
+**Why (the original reason, still true).** `self.cancel_all_orders()` at
+`strategies/base.py:236` is a hard TypeError against the pinned 1.229.0 - `cancel_all_orders`
+declares `instrument_id` positionally with no default (`trading/strategy.pxd:162`, verified). It
+is the FIRST executable statement of the acting branch, so the session-blackout flatten raises
+before the EXITING transition and before `submit_exit`, on every tick, with a live position, and
+the exception escapes into the SessionActor's tick handler because msgbus publish is synchronous
+and NT re-raises from `handle_quote_tick`. Nothing in `tests/` touches `flatten_positions` at
+all, which is why this has sat there. This task must land before the kill switch, because the
+kill switch calls exactly this method.
 
-**Detail.** Rewrite `flatten_positions(self, *, reason: str)` (base.py:227-239):
-- `if self.is_exiting(): journal FLATTEN_ALREADY_RUNNING; return`. NT warns and no-ops on a second `market_exit()` (strategy.pyx:1768-1770), which would read as progress.
-- If `cache.orders_open(None, None, self.id)`, `cache.orders_inflight(...)` and `cache.positions_open(...)` are all empty: journal FLATTEN_SKIPPED with the state and reason, return. The guard is now the CACHE, not the FSM state - the old FSM guard refused to act in Flat, Evaluating, PendingApproval and Exiting, three of which can hold real exposure or real in-flight intent.
-- Otherwise: transition to EXITING when the state is IN_POSITION or PENDING_ENTRY (the guard now governs the LABEL, not whether the flatten happens), then `self.market_exit()`.
-- Carry the T1 comment naming the upstream capability and the delete condition: 'stands in for our own cancel + close + retry loop; delete this wrapper when the FSM observes on_market_exit/post_market_exit directly'.
+**Why (the new reason, and it is the larger one).** In NautilusTrader 1.229.0 a filled order on a
+Deribit option combo produces **no `Position` object at all**. `CryptoOptionSpread` carries
+`InstrumentClass.OPTION_SPREAD`, so `Instrument.is_spread()` is true, and the ExecutionEngine
+skips the position lifecycle for such a fill (`execution/engine.pyx:1653`); the upstream docs
+state it outright - "Positions are not created for spread instruments"
+(`docs/concepts/positions.md:445`). `market_exit()` builds its instrument set from
+`cache.positions_open()` plus open and in-flight orders (`trading/strategy.pyx:1780-1794`), so a
+combo whose orders have all filled contributes **nothing** to that set. Bare `market_exit` on a
+filled combo therefore cancels nothing, closes nothing, and reports completion. NT expects the
+adapter to emit synthetic per-leg fills instead - Interactive Brokers does exactly that
+(`_generate_leg_fill`, with a `-LEG-` client-order-id convention) - and the Deribit adapter has
+**zero** occurrences of combo, leg or spread anywhere in its execution path. Upstream issue
+**#4329** acknowledges the gap.
 
-Add `on_market_exit()` override: journal FLATTEN_START with the instrument set and the three cache counts.
+`strategies/reference.py:150-167` trades the Deribit vertical as ONE combo instrument, so this is
+the live configuration, not a hypothetical.
 
-Add `post_market_exit()` override: read `orders_open`, `orders_inflight`, `positions_open` filtered by `strategy_id=self.id`, plus `self.portfolio.is_completely_flat()`. All three zero AND portfolio flat -> FLATTEN_COMPLETE `{flat: true, counts}` at INFO, and transition EXITING -> FLAT with reason 'flatten_complete'. Otherwise -> FLATTEN_COMPLETE `{flat: false, counts}` at ERROR, and do NOT transition to Flat. Both sources must agree: `market_exit` and the cache queries are strategy_id-scoped, and only the portfolio surfaces exposure no strategy owns. NO re-arm loop - NT already retried `market_exit_max_attempts` times and gave up naming its residuals.
+**Files.** `src/nautilus_zerodte/strategies/base.py`,
+`src/nautilus_zerodte/node/adapters/` (instrument loading and the cancel step),
+`tests/unit/test_reference_strategy.py`, `tests/integration/test_session_flatten_backtest.py`,
+`docs/quant/risk.md`, `docs/quant/execution.md`
 
-Fix the first-fill bug at base.py:187-191: the `EXITING -> FLAT on the first OrderFilled` transition has no quantity reconciliation and never consults the cache, so a partially filled multi-leg exit reports Flat with live exposure. Gate the transition on the cache reporting zero open positions and zero open/inflight orders for this strategy; otherwise journal PARTIAL_EXIT_FILL and stay EXITING.
+#### H3.0 - What the venue does, with the confidence stated
 
-Fix the per-tick flood in `_manage_position` (base.py:517-520): only call `flatten_positions` when `not self.is_exiting()`. SessionActor republishes on every quote tick with no dedupe (session.py:54-55), and `Journal.record` is a synchronous open-append-close, so an unguarded call is one disk write per tick from a market-data callback.
+**At the venue, a filled combo is held as two leg positions - 92%, not confirmed.** The residual
+8% is real and must not be rounded away: **no normative sentence in Deribit's API reference
+answers the question either way** (checked across all 185 OpenAPI paths, the AsyncAPI spec, the
+JSON-RPC changelog, the FIX docs and the full docs dump; every position example in the reference
+is `BTC-PERPETUAL`), and the positions-only `kind_without_spot` filter enum still lists both
+combo kinds, which is the one unexplained counter-datum.
 
-Amend the risk.md interim row's final clause: the session flatten is no longer 'itself untested and currently broken'.
+What carries the 92% is accounting and lifecycle evidence, not the settlement argument:
 
-Note the deliberate semantic change for the commit message (docs/testing.md item 3): the flatten now closes leg by leg with NT reduce-only MARKET orders rather than the fixed-quantity IOC combo `submit_exit` sent. `submit_exit` remains for the tp_sl path in reference.py. The old behaviour closed one instrument at a fixed `config.order_qty` regardless of the actual position, so for a vertical plus a perp hedge it would have left legs open - this is a strict improvement, and there are no existing tests to update because there were none.
+- `open_interest` was **removed from the combo book ticker as an announced breaking change** and
+  is absent live, while the same probe shows 96.4 on the leg instrument.
+- Deribit **deactivates low-volume combo books** (soft and hard caps; **error 13035**) into FIX
+  `SecurityStatus 3`, "inactive (no new orders, edits, or cancellations)". No venue does that to
+  an instrument that holds customer positions.
+- The combo instrument charges **zero maker and taker commission** while its legs are
+  fee-bearing.
+- Deribit's own `include_combos` wording locates the position at the **leg** instrument, with
+  combo orders sitting outside it.
 
-**Tests.** Unit tests construct the strategy unregistered (the tests/unit/test_reference_strategy.py:17-37 pattern). NOTE: `Actor.cache` and `Actor.portfolio` are `cdef readonly` and CANNOT be assigned - shadow them with properties on a test subclass, exactly as tests/unit/test_selector_actor.py:22-28 already does for msgbus.
-1. `test_flatten_calls_market_exit_not_bare_cancel_all`: with a stub cache reporting one open position, `flatten_positions` calls `market_exit` exactly once and never calls `cancel_all_orders` with zero arguments. RED BY: restore `self.cancel_all_orders()` - raises TypeError. This is the hard-rule-2 bug-fix test; watch it red on the unfixed line in the container before restoring.
-2. `test_post_market_exit_does_not_claim_flat_with_residuals`, three cases: (a) all cache counts zero and `is_completely_flat()` True -> FLATTEN_COMPLETE flat:true at INFO; (b) cache reports one position -> flat:false at ERROR; (c) cache empty but `is_completely_flat()` False -> flat:false. RED BY: journal flat:true unconditionally -> (b) and (c) red. RED BY (separately): check only the cache -> (c) red. Case (c) is the one that fails any single-source implementation.
-3. `test_partial_exit_fill_does_not_report_flat`: state EXITING, deliver one OrderFilled while the stub cache still reports an open position -> state stays EXITING, a PARTIAL_EXIT_FILL record exists, no FSM_TRANSITION to Flat. RED BY: restore the unconditional transition at base.py:187-191.
-4. `test_flatten_on_empty_book_journals_skipped_not_complete`: empty cache -> FLATTEN_SKIPPED, no FLATTEN_START, no `market_exit` call. RED BY: drop the cache guard - a FLATTEN_START appears. This keeps 'the book was already empty' and 'we closed the book' as different observable outcomes.
-5. `test_manage_position_does_not_reflatten_while_exiting`: with `is_exiting()` True, ten `_manage_position` calls produce zero new journal records. RED BY: drop the `not self.is_exiting()` guard - ten FLATTEN_ALREADY_RUNNING records appear, one disk write each.
-6. INTEGRATION `test_session_blackout_flatten_actually_flattens` (new file): backtest_reference.yaml with `backtest_plumbing`, journal on tmp_path, and `market_close_utc` chosen so the blackout begins MID-RUN, computed from the catalog bounds - NOT tick one. The existing tests/integration/test_gate_backtest.py sets market_close_utc 14:45 against a fixture starting 14:30:00 with a 30-minute blackout, so that run is in blackout from the first tick and the strategy is never in a position; it proves nothing about flattening and is precisely why the TypeError was never seen. Assert on `Journal.load` APPEND order (never `entry.ts` - models/journal.py:18 is `datetime.now`): FSM_TRANSITION to InPosition at a LOWER index than FLATTEN_START, then a closing FILL, then FLATTEN_COMPLETE flat:true with all counts zero. RED BY: restore the old `flatten_positions` body - the run raises the TypeError out of the synchronous handler.
+**The settlement argument previously given for this is withdrawn and must not be reintroduced.**
+A combo is a fully lifecycled instrument: live metadata carries `expiration_timestamp`,
+`settlement_period` ("day"/"week"), `settlement_currency`, `contract_size` and `instrument_id`,
+it reaches state `delivered`, and it is archived under `expired=true`. And the inference does not
+follow even if it were not deliverable - a venue could hold a combo position and decompose it at
+expiry, or cash-settle it against a combo mark. What survives is only the narrow, documented
+claim that no settlement, delivery, exercise or expiry **process** for a combo appears anywhere in
+Deribit's spec (the `settlement_type` taxonomy covers futures, perpetuals and options only) and
+that a combo ticker carries no `settlement_price` while its leg does. That is a weak observation,
+not a load-bearing one.
 
-**Risk.** This changes an existing behaviour with zero prior test coverage, so there is no 'old test read and deliberately updated' - there was nothing to read. State that in the commit message rather than letting it look like the tests were always absent for a good reason. Also: `reference.py`'s one-shot latches `_exit_submitted` and `_hedge_submitted` are never reset on the return to Flat, so after one tp_sl exit that path is dead for the life of the object. Out of scope here, but it means flatten becomes the only way out and its reliability matters more than it looks - file it.
+**None of this changes the design.** The NT finding above holds under both answers, because NT
+creates no position for a spread fill regardless of what the venue holds. The venue question only
+decides which way it fails: if the per-leg user trade inherits the parent combo order's `label`,
+the fill is booked against the combo instrument and produces no position (silent non-flatten); if
+it does not, the fill is treated as external, goes to reconciliation, and materialises two leg
+positions (the naked-leg hazard). Deribit's spec says only that `starbase_client_order_id` on
+combo legs inherits the parent's; nothing about `label` on the standard API path. **NOT FOUND**,
+and it is the one fact no amount of documentation reading will supply.
+
+#### H3.1 - The flatten path itself
+
+Rewrite `flatten_positions(self, *, reason: str)` (`base.py:227-239`):
+
+- `if self.is_exiting(): journal FLATTEN_ALREADY_RUNNING; return`. NT warns and no-ops on a
+  second `market_exit()` (`strategy.pyx:1768-1770`), which would read as progress.
+- The emptiness guard reads **our own exposure record** (H3.2) as well as
+  `cache.orders_open(None, None, self.id)`, `cache.orders_inflight(...)` and
+  `cache.positions_open(...)`. All four empty: journal FLATTEN_SKIPPED with the state and reason,
+  return. The old FSM guard refused to act in Flat, Evaluating, PendingApproval and Exiting,
+  three of which can hold real exposure; the cache alone is not enough either, because it is
+  blind to spread exposure.
+- Otherwise transition to EXITING when the state is IN_POSITION or PENDING_ENTRY (the guard
+  governs the LABEL, not whether the flatten happens), then run the close sequence below.
+
+**THE CLOSE SEQUENCE. Combo-first, then leg-by-leg, never the reverse.**
+
+1. **Cancel, including combo orders.** Cancel on the combo instrument explicitly. A leg-level
+   `cancel_all_orders` does not reach a resting combo order (see C1), and a resting combo order
+   can re-open the exposure the flatten just closed.
+2. **Attempt the atomic combo close.** One aggressive **reduce-only LIMIT** order on the combo
+   instrument, priced through the implied bid or ask by a configured number of ticks. Not a
+   market order: `private/close_position` accepts only `type` `limit|market`, NT's Deribit adapter
+   implements **no `close_position` method at all** (the string appears only in a rate-limit
+   bucket), and Deribit's knowledge base states option combos support the limit order type only.
+   That KB sentence is **second-hand** (support.deribit.com returns 403 to both WebFetch and
+   curl) and is in tension with the normative reference, which enumerates the order types not
+   supported for `option` and `option_combo` as exactly the trigger types
+   ("stop_limit, stop_market, take_limit, take_market, and trailing_stop ... are not supported for
+   option and option_combo instruments") and does not exclude `market`. One of the two is wrong.
+   **Design for limit-only, because it is the assumption that is safe if it turns out to be the
+   wrong one.**
+3. **Reprice and retry, bounded.** N attempts (config, default 3) at an interval on the engine
+   clock, each repricing further through the touch by a configured tick step, with a hard cap on
+   total aggression. Bounded, because an unbounded reprice loop on a 0DTE combo is a market order
+   with extra steps and no ceiling. Every attempt journals its price and its outcome. **Design
+   this loop before anything else in the task**; it is the part that decides whether the flatten
+   terminates.
+4. **On exhaustion, rejection, or an unavailable combo book, fall back to leg-by-leg** with the
+   ordering of H3.3. The fallback is not optional and cannot be skipped: a deactivated combo book
+   accepts no new orders, edits or cancellations (error 13035 / FIX `SecurityStatus 3`), and the
+   changelog states clients cannot even subscribe to a non-open instrument. The combo-level close
+   can vanish without warning, so it can never be the only path.
+5. **Resolve the legs from the venue, not from the instrument object.** `CryptoOptionSpread`
+   carries `strategy_type` and no legs, no strike and no option kind (verified in
+   `crypto_option_spread.pyx`). Legs come from `public/get_combos` or `public/get_combo_details`,
+   which return `{instrument_name, amount}` with the sign carrying direction (verified live:
+   `BTC-CCOND-...` resolves to `[+1 77000-C, -1 78000-C, -1 80500-C, +1 81500-C]`). The
+   develop-branch adapter also attaches `deribit_combo_id`, `deribit_combo_state` and
+   `deribit_combo_legs` to the instrument's untyped `info` map - **check those keys exist at the
+   version actually pinned** before depending on them; the adapter source verified for those keys
+   is on `develop`, not on the pinned tag.
+
+Add `on_market_exit()` override: journal FLATTEN_START with the instrument set, the three cache
+counts, and our own combo exposure record.
+
+Add `post_market_exit()` override: read `orders_open`, `orders_inflight`, `positions_open`
+filtered by `strategy_id=self.id`, plus `self.portfolio.is_completely_flat()`, **plus our own
+combo exposure record**. All zero AND portfolio flat -> FLATTEN_COMPLETE `{flat: true, counts}`
+at INFO, and transition EXITING -> FLAT with reason `flatten_complete`. Otherwise
+FLATTEN_COMPLETE `{flat: false, counts}` at ERROR, and do NOT transition to Flat. The sources
+must all agree: `market_exit` and the cache queries are strategy_id-scoped, only the portfolio
+surfaces exposure no strategy owns, and **only our own record sees the combo**.
+
+Fix the first-fill bug at `base.py:187-191`: the `EXITING -> FLAT on the first OrderFilled`
+transition has no quantity reconciliation and never consults the cache, so a partially filled
+multi-leg exit reports Flat with live exposure. Gate the transition on zero open positions, zero
+open and in-flight orders, and zero recorded combo exposure; otherwise journal PARTIAL_EXIT_FILL
+and stay EXITING.
+
+Fix the per-tick flood in `_manage_position` (`base.py:517-520`): only call `flatten_positions`
+when `not self.is_exiting()`. SessionActor republishes on every quote tick with no dedupe
+(`session.py:54-55`), and `Journal.record` is a synchronous open-append-close, so an unguarded
+call is one disk write per tick from a market-data callback.
+
+#### H3.2 - Track spread exposure ourselves, from OrderFilled
+
+**Do not source spread exposure from `cache.positions_open`.** Maintain a small per-instrument
+signed exposure record inside the strategy, updated from the `OrderFilled` events NT **does**
+emit on the spread instrument, and drive the emergency close from that record. This is true under
+both venue answers and independent of the A-vs-B question, because the position is never created
+(`execution/engine.pyx:1653`, `docs/concepts/positions.md:445`).
+
+Keep it deliberately small: a dict of `InstrumentId -> signed Decimal`, mutated only in
+`on_order_filled`, read by the flatten and by `post_market_exit`. No clock, no queue, no
+scheduler (T1, and the prime directive). It is not a reimplementation of `Portfolio` - it exists
+only because NT declines to create the object for this instrument class, and the T1 comment must
+say so and name the delete condition: **delete this record the day NT's Deribit adapter emits
+per-leg fills for a combo, or the day the ExecutionEngine creates positions for spreads.**
+
+#### H3.3 - Short-leg-first ordering, as a hard rule
+
+Whenever the flatten legs out, **close the short leg first** (buy back the short call), then the
+long. Never the reverse, and never in an unspecified order.
+
+NT's `market_exit` iterates `for instrument_id in instruments:` over a Python `set`
+(`strategy.pyx:1780-1794`), so the order today is **arbitrary and hash-dependent**. If
+reconciliation ever materialises the two leg positions, `market_exit` legs out in hash order and
+can leave the account **naked short a call** - unbounded loss on a 0DTE structure. Our fallback
+must build an ordered structure, sort short-risk-first from the signed leg amounts returned by
+`public/get_combos`, and never iterate a set. Small, cheap, and it makes the hazard impossible
+regardless of how the venue question resolves. See D12.
+
+#### H3.4 - Four live bugs the research surfaced
+
+Each is a code change. **None of them is made by this documentation pass** - they are recorded
+here as tasks.
+
+- **C1. The cancel step is already wrong today, under either venue answer.**
+  `private/cancel_all_by_instrument` defaults `include_combos=false` ("When set to `true` orders
+  in combo instruments affecting a given position will also be cancelled. Default: `false`"), and
+  the Deribit adapter has zero occurrences of combo, leg or spread, so it never sets it. A
+  resting combo order that would re-open exposure **survives** a leg-level `cancel_all_orders`.
+  Fix: cancel on the combo instrument explicitly, or set `include_combos`.
+- **C2. If the leg instruments are not loaded, fills disappear.** The adapter drops a user trade
+  whose `instrument_name` is not in its instrument cache, logging a warning. Loading only
+  `DeribitProductType.OPTION_COMBO` therefore means per-leg user trades vanish - no position, no
+  reconciliation, no flatten. Fix: **always load the leg option instruments alongside the
+  combos.** This is also the switch that decides whether reconciliation can see the exposure at
+  all.
+- **C3. `market_exit` does not see spread exposure**, per H3.2. Fix: H3.1 and H3.2 together. The
+  narrow statement of the bug, for the commit message: today a filled combo plus
+  `flatten_positions` equals a journal that says flat and an account that is not.
+- **C4. Raw combo greeks are not trustworthy.** `public/ticker` on
+  `BTC-RRITM-11SEP26-75000_84000` returned `delta 1.77439`, `gamma -2e-05`, `vega -7.49861`,
+  `theta 29.52107`, `rho 20.78882`, `mark_price 0.0059` and **`mark_iv -1.75`** - a negative
+  implied volatility, which is proof that not all combo-level derived fields are meaningful. Sign
+  convention, scaling and per-unit basis for combo greeks are undocumented. Fix: compute greeks
+  as the signed-amount-weighted sum of the legs' own tickers, and do not feed a raw combo greek
+  into a risk limit without first calibrating each one against a hand-computed leg sum.
+
+Reconciliation is worth stating too, because neither world is safe by default: NT's Deribit
+position path is a 1:1 passthrough of Deribit's `instrument_name` with no combo-to-leg mapping
+and no `is_spread` guard, and any reconciliation fill generated for a spread instrument is then
+discarded by the engine's `is_spread` skip. So if the venue reports a combo-named position the
+discrepancy loops forever; if it reports two leg positions, reconciliation works and produces
+exactly the two positions that an unordered `market_exit` then legs out of arbitrarily (H3.3).
+
+#### H3.5 - The probes that settle what is left, before this lands
+
+Both are cheap and neither belongs in `src/`.
+
+1. **Read-only, 30 seconds, no order, and it settles the venue question outright if the account
+   has ever filled a combo.** With a `trade:read` key: `private/get_user_trades_by_currency` with
+   `currency=BTC`, `kind=combo`, `historical=true`. If a combo trade comes back, note its
+   `combo_id` and `legs[]`, then immediately call `private/get_positions` with `currency=BTC` and
+   no kind filter, `private/get_positions` with `kind=option_combo`, and `private/get_position`
+   with the combo `instrument_name`. Leg names in the unfiltered response plus `[]` from the
+   `kind=option_combo` call is decisive for two leg positions; a combo-named row is decisive for
+   one. Silent if the account has never traded a combo, which is why it is first rather than the
+   fallback.
+2. **The decisive one, about two minutes, zero real money: `test.deribit.com`.** Faucet-funded
+   testnet account, API console at `test.deribit.com/api_console`.
+   `public/get_instruments?currency=BTC&kind=option_combo`, pick a combo in state `open`, note
+   `min_trade_amount` (0.1 on everything sampled), resolve its legs from `public/get_combos`.
+   Then `private/buy` on the combo, `amount 0.1`, `type=limit`, priced at or through the best ask,
+   **with a distinctive `label`** - that label is what earns the test its keep. Then in one sweep:
+   `private/get_positions` with no kind filter; `private/get_positions` with `kind=option_combo`;
+   `private/get_position` on the combo name; `private/get_user_trades_by_currency` with
+   `kind=combo`; `private/get_user_trades_by_instrument` on EACH leg; `private/get_open_orders`.
+   That single sequence settles the venue question definitively, whether `kind=option_combo`
+   returns rows or `[]`, whether `private/get_position` accepts a combo name, whether
+   `type=market` is actually rejected on a combo and whether `reduce_only` is accepted, and -
+   critically - **whether the per-leg user trades carry our label**, which is the fact that
+   decides whether the failure mode is silent non-flattening or nondeterministic legging-out.
+   **Do not run the order probe on the production account.** There is no information in a live
+   fill that the testnet fill does not give, and the naked-leg risk under investigation is exactly
+   what a production probe would expose the account to.
+
+Also unresolved, and recorded so nobody assumes otherwise: whether a filled combo appears in
+`private/get_transaction_log` as two leg trade rows (the endpoint has no `combo_id`, no combo
+transaction type and no leg grouping - confirmed absent, so the ledger shape is only inferable);
+whether Deribit ever emits a transient combo-kind position row during settlement, liquidation or
+ADL (NOT FOUND either way); and whether closing one leg of a filled combo under Portfolio Margin
+actually rejects the second reduce-only close with "Not Enough Funds" (the KB says it does for
+hedged pairs generally, the KB could not be fetched directly, and it has never been observed on a
+combo specifically).
+
+**Amend the risk.md interim row's final clause:** the session flatten is no longer "itself
+untested and currently broken".
+
+**Note the deliberate semantic change for the commit message** (`docs/testing.md` item 3): the
+flatten becomes an aggressive reduce-only limit close on the combo with a bounded reprice loop
+and a short-leg-first leg-by-leg fallback, rather than the fixed-quantity IOC combo `submit_exit`
+it sends today. `submit_exit` remains for the tp_sl path in `reference.py`. The old behaviour
+closed one instrument at a fixed `config.order_qty` regardless of the actual position, so for a
+vertical plus a perp hedge it would have left legs open.
+
+**Tests.** Unit tests construct the strategy unregistered (the
+`tests/unit/test_reference_strategy.py:17-37` pattern). NOTE: `Actor.cache` and `Actor.portfolio`
+are `cdef readonly` and CANNOT be assigned - shadow them with properties on a test subclass,
+exactly as `tests/unit/test_selector_actor.py:22-28` already does for msgbus.
+
+1. `test_flatten_calls_market_exit_not_bare_cancel_all`: with a stub cache reporting one open
+   position, `flatten_positions` reaches the close sequence and never calls `cancel_all_orders`
+   with zero arguments. RED BY: restore `self.cancel_all_orders()` - raises TypeError. This is
+   the hard-rule-2 bug-fix test; watch it red on the unfixed line in the container before
+   restoring.
+2. `test_flatten_acts_on_combo_exposure_with_an_empty_position_cache`: exposure record holds one
+   filled combo, `cache.positions_open` returns empty, `cache.orders_open` and `orders_inflight`
+   return empty. Assert a close is attempted and FLATTEN_SKIPPED is NOT journalled. RED BY:
+   source the guard from `cache.positions_open` alone - FLATTEN_SKIPPED appears and no order is
+   sent. **This is the test for the bug that motivated the rewrite**, and it fails on the
+   original H3 design.
+3. `test_leg_fallback_closes_the_short_leg_first`: force the combo close to fail, assert the
+   fallback submits the short leg before the long, over several runs with the leg set built in
+   both input orders. RED BY: iterate a `set` - the assertion fails on at least one ordering.
+   Assert on the recorded submission order, never on set iteration order itself.
+4. `test_combo_close_retry_is_bounded_and_reprices`: a combo close that never fills produces
+   exactly N attempts at monotonically more aggressive prices, then exactly one fallback. RED BY:
+   drop the attempt cap - the test hangs or exceeds N, which is the point.
+5. `test_post_market_exit_does_not_claim_flat_with_residuals`, four cases: (a) all counts zero,
+   exposure record empty and `is_completely_flat()` True -> `flat: true` at INFO; (b) cache
+   reports one position -> `flat: false` at ERROR; (c) cache empty but `is_completely_flat()`
+   False -> `flat: false`; (d) cache empty and portfolio flat but the **exposure record**
+   non-empty -> `flat: false`. RED BY: journal `flat: true` unconditionally -> (b), (c) and (d)
+   red. RED BY (separately): check only the cache -> (c) and (d) red. Case (d) is the one that
+   fails any implementation that trusts NT's position view for a spread.
+6. `test_partial_exit_fill_does_not_report_flat`: state EXITING, deliver one OrderFilled while
+   the stub cache still reports an open position -> state stays EXITING, a PARTIAL_EXIT_FILL
+   record exists, no FSM_TRANSITION to Flat. RED BY: restore the unconditional transition at
+   `base.py:187-191`.
+7. `test_flatten_on_empty_book_journals_skipped_not_complete`: empty cache and empty exposure
+   record -> FLATTEN_SKIPPED, no FLATTEN_START, no close attempted. RED BY: drop the guard - a
+   FLATTEN_START appears. This keeps "the book was already empty" and "we closed the book" as
+   different observable outcomes.
+8. `test_manage_position_does_not_reflatten_while_exiting`: with `is_exiting()` True, ten
+   `_manage_position` calls produce zero new journal records. RED BY: drop the
+   `not self.is_exiting()` guard - ten FLATTEN_ALREADY_RUNNING records appear, one disk write
+   each.
+9. `test_cancel_step_covers_combo_orders` (C1): assert the cancel issued for a combo position
+   either targets the combo instrument or sets `include_combos`. RED BY: cancel the legs only -
+   the assertion fails. This is a test over our adapter call, not over Deribit.
+10. INTEGRATION `test_session_blackout_flatten_actually_flattens` (new file):
+    `backtest_reference.yaml` with `backtest_plumbing`, journal on `tmp_path`, and
+    `market_close_utc` chosen so the blackout begins MID-RUN, computed from the catalog bounds -
+    NOT tick one. The existing `tests/integration/test_gate_backtest.py` sets `market_close_utc`
+    14:45 against a fixture starting 14:30:00 with a 30-minute blackout, so that run is in
+    blackout from the first tick, the strategy is never in a position, it proves nothing about
+    flattening, and it is precisely why the TypeError was never seen. Assert on `Journal.load`
+    APPEND order (never `entry.ts` - `models/journal.py:18` is `datetime.now`):
+    FSM_TRANSITION to InPosition at a LOWER index than FLATTEN_START, then a closing FILL, then
+    FLATTEN_COMPLETE `flat: true` with all counts zero. RED BY: restore the old
+    `flatten_positions` body - the run raises the TypeError out of the synchronous handler.
+
+**Risk.** Three things.
+
+First, this changes existing behaviour with zero prior test coverage, so there is no "old test
+read and deliberately updated" - there was nothing to read. State that in the commit message
+rather than letting it look like the tests were always absent for a good reason.
+
+Second, the fallback path is now the least-tested code in the system and it only ever runs during
+an emergency. That was the argument for legging out unconditionally and it was a real argument
+(see D11 for why it was outweighed). The mitigation is that the fallback must be exercised by a
+unit test that forces the combo close to fail, every time, not only by an integration test that
+happens to take the happy path.
+
+Third, `reference.py`'s one-shot latches `_exit_submitted` and `_hedge_submitted` are never reset
+on the return to Flat, so after one tp_sl exit that path is dead for the life of the object. Out
+of scope here, but it means flatten becomes the only way out and its reliability matters more
+than it looks - file it.
 
 ### H4 - Halt trip-file service, bus contract and config (no NT import, no behaviour yet)  [not started]
 
@@ -425,7 +746,8 @@ The H4 validator already guarantees `market_exit_interval_ms * market_exit_max_a
 - shutdown_after_flat - firing `Component.shutdown_system` once every ack reports flat. Safe to defer: the halted node is still up, still latched, still refusing intake, and a human is already at the keyboard. Doing it early is the one outcome strictly worse than staying up (an open position with no strategy watching it), and in backtest it is verifiably fatal to the flatten itself. The config knob ships in phase 1 defaulted false with a test asserting shutdown does NOT fire on trip; only the wiring is deferred.
 - RiskEngine.set_trading_state(HALTED) after flat is confirmed, via a msgbus endpoint registered in node/. Safe to defer: while the strategy latch holds and the book is flat there is nothing for it to protect. It only matters against a strategy bug that submits without running the gate pipeline. It also drags in a new module and an endpoint registered over an engine internal, which is the largest T1 argument in the piece and deserves its own decision entry and its own test (an order denied with reason "TradingState.HALTED").
 - TradingState.REDUCING at trip time. Not deferred - REJECTED. Verified directional-only and it never reads reduce_only, so on the fresh legs 0DTE opens it blocks nothing. Shipping it plus a TRADING_STATE_SET journal record would manufacture the appearance of an engine-level lock that does not exist, which is the same defect class as the risk.md row that started this.
-- A retry policy of our own on top of NT's. Not deferred - REJECTED as a T1 violation. NT already retries market_exit_max_attempts times at market_exit_interval_ms and then gives up naming the residuals. On residuals we journal FLATTEN_COMPLETE {flat: false} at ERROR and the CLI exits 3; escalation is a human, which is what "guardrails fail closed and never auto-reset" requires.
+- A retry policy of our own on top of NT's, FOR THE INSTRUMENTS NT ACTUALLY CLOSES. Not deferred - REJECTED as a T1 violation. NT already retries market_exit_max_attempts times at market_exit_interval_ms and then gives up naming the residuals. On residuals we journal FLATTEN_COMPLETE {flat: false} at ERROR and the CLI exits 3; escalation is a human, which is what "guardrails fail closed and never auto-reset" requires.
+  **AMENDED 2026-09-06:** the bounded reprice-retry loop in H3.1 step 3 is NOT an exception to this. It exists on the combo path only, where NT closes nothing at all (execution/engine.pyx:1653) and its Deribit adapter implements no `close_position`, so there is no upstream retry to sit on top of. T1 requires naming the upstream capability being stood in for and the condition that lets us delete the wrapper: delete the reprice loop the day NT's Deribit adapter emits per-leg fills for a combo, or the day the ExecutionEngine creates positions for spread instruments (upstream issue #4329).
 - Extending the Test column to all ten rows of the risk.md guardrail table. Safe to defer because it is a doc-and-test audit, not a control - but note that several rows name a "Risk actor" that does not exist anywhere in src/, so doing it honestly will turn multiple rows red at once. That is worth knowing before someone starts.
 - A node-level sweep of exposure no strategy owns. `market_exit` and the cache checks are all strategy_id-scoped; NT has no trader-wide flatten helper. Safe to defer only because `portfolio.is_completely_flat()` SURFACES such exposure and forces FLATTEN_COMPLETE {flat: false} at ERROR - the operator is told, the system simply cannot close it. That limit must be stated in risk.md, not implied away.
 - Venue-side cancel-on-disconnect (Deribit and IB) in node/adapters. This is the only thing that helps when the process is dead or the event loop is wedged - and the kill switch shares an event loop with the thing it is killing. Deferring it is safe only in the sense that it is a different control; it must be written down in risk.md as still missing rather than silently absent.
@@ -435,7 +757,7 @@ The H4 validator already guarantees `market_exit_interval_ms * market_exit_max_a
 ## Open questions for Akash
 
 1. `halt.poll_secs` default. 1.0 s is the trip-to-first-cancel bound in live and on a violent 0DTE move a second is a lot of gamma; 0.25 s costs four `os.stat` calls per second inside an engine timer callback. Both are defensible. This is a risk-appetite call about how much latency the operator will accept against how much I/O we put on the loop, and it is not mine to make.
-2. Multi-leg unwind semantics. NT's `market_exit` closes leg by leg with reduce-only MARKET orders; the existing `submit_exit` closes the combo. For a vertical plus a perp hedge, leg-by-leg market exits carry real legging risk, traded for certainty of getting out. Do you want `on_market_exit` to attempt a combo close first with leg-by-leg as the fallback, or is leg-by-leg unconditionally the right emergency behaviour? I have designed for leg-by-leg because a kill switch should be dumb, but this is a trading decision.
+2. ~~Multi-leg unwind semantics.~~ **ANSWERED 2026-09-06 - combo-first, with short-leg-first leg-by-leg as the fallback. Recorded as D11 and D12, and H3 is rewritten around it.** The question was whether to attempt a combo close first or to leg out unconditionally; I had designed for leg-by-leg because a kill switch should be dumb. That is reversed. The argument that changed it is Deribit portfolio margin: closing one leg raises initial margin on the remainder and can reject the second reduce-only order with "Not Enough Funds", turning a transient naked short into a stuck one. The "keep it dumb" argument was real and is now the documented residual risk on the fallback path.
 3. Should `paper` REFUSE to start when `halt.enabled` is false? Defaulting the switch off means a profile that forgets one line has no kill switch and nothing complains - the default is quietly the dangerous one. Refusing to start is safer and adds an operator surface plus an override flag. I have not put the refusal in the task list; say the word and it becomes two lines in H7.
 4. Retiring `FLATTEN_REQUEST` in favour of `HALT_REQUEST` is a hard-rule-8 public-API break. Keeping the old name is worse (it meant "nothing happened", so old and new journals would be indistinguishable), but I do not know whether anything outside this repo reads that event name. If something does, the migration note is not enough.
 5. Where the operator's runs directory lives in production. The CLI and the node must resolve the SAME journal path or the ack times out to exit 4 while the node did in fact flatten - exit 4 for the wrong reason during a drawdown is a bad five minutes. The real fix is an absolute runs dir in the operator profiles, which cannot be committed. Is that `ZERODTE_RUNS_DIR` exported in your shell profile, or a documented `--runs-dir` flag on every command? Pick one and I will wire it.
@@ -445,6 +767,15 @@ The H4 validator already guarantees `market_exit_interval_ms * market_exit_max_a
 9. Whether the doc-content test in H2 should eventually cover all ten guardrail rows. Doing so will turn several rows red immediately, because rows for the daily loss limit, the consecutive-loss breaker, the margin ceiling and the reconciliation halt all name a "Risk actor" that does not exist anywhere in src/. Fixing one row while the enforcement that would have caught it stays absent means the next false row gets written the same way - but turning four rows red in one commit is a scheduling decision.
 
 ## The decision entry to add as D8 when the design is accepted
+
+**AMENDED 2026-09-06.** The draft below says "the flatten itself is entirely NT's". That is no
+longer true for the combo instrument, and the D8 text must be corrected before it is committed:
+`market_exit()` is blind to a filled spread (execution/engine.pyx:1653;
+`docs/concepts/positions.md:445`), so the flatten is NT's `market_exit` for the non-spread
+instruments PLUS our own combo-first close sequence over an `OrderFilled`-sourced exposure
+record, with short-leg-first leg-by-leg as the bounded fallback. See D11, D12 and D13, and H3.
+Everything else in the draft - the trip file, the latch, the two-source flatness verification, the
+exclusion of node shutdown and of `TradingState` - stands unchanged.
 
 **D8 - The operator kill switch is a latched trip file that flattens without stopping the node**
 

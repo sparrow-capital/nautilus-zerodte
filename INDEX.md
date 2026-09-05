@@ -31,7 +31,7 @@ removed.
 | --- | --- | --- |
 | `docs/quant/evaluation.md` | The back/paper testing protocol: recording, purged splits, CPCV, the trial registry, neighbourhood stability, cost stress, null baselines, deflated statistics (DSR, PSR, PBO), effective sample size, and the reporting rules. | Running a sweep, tuning a parameter, choosing a statistic, or writing up a result. **This is the core workflow of the project.** |
 | `docs/quant/attribution.md` | The PnL explain specification: every term (delta, gamma, theta, vega, vanna, volga, charm, inverse-contract cross term, funding, fees, slippage), path summation, the residual definition, and the two tests that gate adoption. Also lists the defects in the current implementation. | Touching `learning/`, changing how PnL is decomposed, or deciding whether a profitable run is adoptable. |
-| `docs/quant/execution.md` | Fill model, cost model, spread and slippage assumptions, queue position, participation caps, settlement at the index print, pin risk, and inverse-contract quoting. | Touching `costs/`, the backtest fee or fill model, or any edge calculation. |
+| `docs/quant/execution.md` | Fill model, cost model, spread and slippage assumptions, queue position, participation caps, settlement at the index print, pin risk, inverse-contract quoting, and the Deribit combo close constraints. | Touching `costs/`, the backtest fee or fill model, or any edge calculation. |
 | `docs/quant/risk.md` | The required guardrails and their tests, the two-dimensional spot-vol shock grid, margin and liquidation, kill switches, and the reset policy. | Touching `configs/risk/`, the greek gate, position sizing, or anything that limits loss. |
 
 ## Venue and wiring

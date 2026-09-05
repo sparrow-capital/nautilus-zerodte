@@ -33,6 +33,50 @@ declares `cancel_all_orders(self, InstrumentId instrument_id, ...)` with no defa
 (`trading/strategy.pxd:162`), which is a hard `TypeError` on the pinned 1.229.0. It has never been
 reached because it needs a strategy actually in a position, and no test puts one there.
 
+**And the intended fix would not have worked either.** The plan was to route the flatten through
+NautilusTrader's `Strategy.market_exit()`. On the Deribit combo this strategy actually trades
+(`strategies/reference.py:150-167` opens the vertical as ONE combo instrument), `market_exit`
+closes **nothing**. NT 1.229.0 creates no `Position` object for a spread fill -
+`CryptoOptionSpread` carries `InstrumentClass.OPTION_SPREAD`, `Instrument.is_spread()` is true,
+and the ExecutionEngine skips the position lifecycle (`execution/engine.pyx:1653`; the upstream
+docs say "Positions are not created for spread instruments",
+`docs/concepts/positions.md:445`). `market_exit` builds its instrument set from
+`cache.positions_open()` plus open and in-flight orders (`trading/strategy.pyx:1780-1794`), so a
+filled combo contributes nothing to it. The result would have been a flatten that reports
+completion with the position still on - the same class of defect as the false row above, one
+layer down. NT expects the adapter to synthesise per-leg fills (Interactive Brokers does:
+`_generate_leg_fill`, `-LEG-` client-order-id convention); the Deribit adapter has zero
+occurrences of combo, leg or spread in its execution path, and upstream issue #4329 acknowledges
+the gap. The redesign is H3 in `docs/killswitch_plan.md` and decisions D11 to D13. **It is also
+not implemented.**
+
+Three further gaps on the same path, all unfixed as of 2026-09-06 and all recorded as tasks in
+H3.4 of `docs/killswitch_plan.md`:
+
+- **The cancel step does not reach combo orders.** `private/cancel_all_by_instrument` defaults
+  `include_combos=false`, and the adapter never sets it, so a resting combo order survives a
+  leg-level cancel and can re-open exposure.
+- **Per-leg fills are dropped when the leg instruments are not loaded.** The adapter discards a
+  user trade whose `instrument_name` is not in its instrument cache, with only a warning. Loading
+  the combos without their legs means those fills vanish entirely - no position, no
+  reconciliation, no flatten.
+- **Raw combo greeks are not safe as risk inputs.** A live `public/ticker` on
+  `BTC-RRITM-11SEP26-75000_84000` returned `mark_iv -1.75` - a negative implied volatility -
+  alongside `delta 1.77439`, `vega -7.49861` and `theta 29.52107`. Sign convention, scaling and
+  per-unit basis for combo-level greeks are undocumented. Greeks for a combo must be summed from
+  the legs' own tickers weighted by signed leg amount, and no raw combo greek may feed a limit
+  until it has been calibrated against a hand-computed leg sum.
+
+**Whether the venue holds a combo as two leg positions is 92%, not settled.** The accounting and
+lifecycle evidence for two leg positions is strong (`open_interest` removed from the combo ticker
+as an announced breaking change and absent live while the leg shows 96.4; combo books deactivated
+by the exchange under error 13035 into a state accepting no orders; zero maker and taker
+commission on the combo while its legs are fee-bearing; Deribit's own `include_combos` wording
+locating the position at the leg). The residual 8% is that **no normative sentence in Deribit's
+API reference answers it either way**, and the positions-only `kind_without_spot` filter enum
+still lists both combo kinds. It does not change the design above, which holds under both
+answers - see H3.0.
+
 "Within one bar", the old wording, was also unachievable as written: there are no bars anywhere in
 this system - both fixture catalogs carry quote ticks and greeks only - so any real bound is a
 timeout, not a bar.
@@ -84,6 +128,16 @@ of what is posted against it.
 - Model the collateral revaluation explicitly. Margin in coin terms against a USD requirement is
   a second-order exposure and it is signed against a short book.
 - Liquidation is modelled as a worst-case fill, not a mid-price unwind.
+- **Portfolio margin can wedge a sequential unwind, and that is a risk limit, not an execution
+  detail.** Closing one leg of a hedged pair raises the initial margin requirement on what
+  remains, and Deribit's position-management guidance says the second reduce-only order can then
+  be rejected with "Not Enough Funds". A partial unwind that cannot complete is a **stuck** naked
+  short, not a briefly exposed one. Two consequences: the flatten closes the combo atomically
+  where it can and legs out short-leg-first where it cannot (D11, D12), and the margin
+  utilisation ceiling must leave enough headroom that a half-finished unwind still fits. The
+  rejection is documented for hedged pairs generally and has **not** been observed on a combo
+  specifically - it is the load-bearing claim behind D11 and the first thing the testnet probe
+  should try to falsify.
 
 ## 4. Sizing
 
