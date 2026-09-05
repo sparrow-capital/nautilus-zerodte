@@ -106,7 +106,15 @@ class AppConfig(BaseModel):
     """Merged runtime configuration for backtest and live nodes."""
 
     trader_id: str = "TRADER-001"
+    # `dry_run` means exactly one thing: strategies journal the intent and do NOT submit an
+    # order. It does not stop the node running. `build_only` is the separate concern of
+    # constructing the node and exiting without running it. They used to be the same flag,
+    # which is how CLAUDE.md hard rule 5 came to say something incoherent - see D10.
     dry_run: bool = False
+    build_only: bool = False
+    # Profile-level opt-in to real order submission: one of the three independent opt-ins
+    # live execution requires. Never default this to true in a committed profile.
+    allow_live: bool = False
     venue: VenueConfig = Field(default_factory=VenueConfig)
     journal: JournalConfig = Field(default_factory=JournalConfig)
     risk: RiskPolicy = Field(default_factory=RiskPolicy)
