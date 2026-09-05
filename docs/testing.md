@@ -36,6 +36,45 @@ cannot fail is not a check.*
   the four allowed directories (`docs/venues.md`).
 - `make lint && make test` is green before any commit. CI additionally runs the golden run.
 
+## Running the suite
+
+`make lint` and `make test` need `nautilus-trader`, which is **wheel-only** - there is no source
+distribution on the nautechsystems index, so it installs on exactly the platforms they publish
+wheels for:
+
+| Platform | Works |
+| --- | --- |
+| Linux x86_64 / aarch64 (manylinux_2_35) | Yes |
+| macOS arm64 (Apple Silicon) | Yes |
+| Windows x86_64 | Yes |
+| **macOS x86_64 (Intel)** | **No, and no version of the package does** |
+
+On an Intel Mac, run the suite in a Linux container instead. Any runtime works; colima is the
+lightest on macOS and needs no Docker Desktop:
+
+```bash
+brew install colima
+colima start --arch x86_64 --cpu 4 --memory 6
+
+docker run --rm --platform linux/amd64 -v "$PWD":/repo -w /repo python:3.14-slim sh -c '
+  apt-get update -qq && apt-get install -y -qq curl
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="/root/.local/bin:$PATH" UV_PROJECT_ENVIRONMENT=/tmp/venv
+  uv sync --group dev
+  uv run --no-sync ruff check src tests
+  uv run --no-sync ruff format --check src tests
+  uv run --no-sync pytest tests/ -q'
+```
+
+`UV_PROJECT_ENVIRONMENT=/tmp/venv` keeps the virtualenv inside the container rather than writing
+a Linux `.venv` into the bind-mounted working tree.
+
+**Do not pin a nightly.** The index prunes old prereleases. The lock previously pinned
+`1.229.0a20260623`; three of its four wheels later began returning 404, which silently broke
+install on every platform except arm64 macOS, CI included. Pin stable releases, and when a run
+fails at `uv sync`, check that the wheel URLs in `uv.lock` still resolve before debugging
+anything else.
+
 ---
 
 ## Definition of done
