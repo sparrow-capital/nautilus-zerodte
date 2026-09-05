@@ -70,9 +70,7 @@ def build_backtest_node(config: AppConfig, catalog_path: Path | str) -> Backtest
 def build_trading_node(config: AppConfig) -> TradingNode:
     """Build a TradingNode with actors, strategy, and venue adapter wiring."""
     journal_path = config.resolved_journal_path()
-    streaming = (
-        build_nt_streaming_config(config.streaming) if config.streaming.enabled else None
-    )
+    streaming = build_nt_streaming_config(config.streaming) if config.streaming.enabled else None
     node_config = TradingNodeConfig(
         trader_id=config.trader_id,
         logging=LoggingConfig(log_level="ERROR"),

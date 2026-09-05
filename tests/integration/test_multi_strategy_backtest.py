@@ -58,7 +58,5 @@ def test_multi_strategy_selector_backtest(catalog_path: Path, tmp_path: Path) ->
     learning = [e for e in entries if e.payload.get("event") == "LEARNING_RECORD"]
     assert len(learning) >= 1
 
-    strategy_starts = [
-        e for e in entries if e.payload.get("event") == "STRATEGY_START"
-    ]
+    strategy_starts = [e for e in entries if e.payload.get("event") == "STRATEGY_START"]
     assert len(strategy_starts) == 2

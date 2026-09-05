@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
-
-from dataclasses import dataclass
 
 from nautilus_zerodte.models.enums import GateStage
 from nautilus_zerodte.models.journal import JournalEntry

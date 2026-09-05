@@ -45,8 +45,7 @@ def test_reference_backtest_full_journal_trail(catalog_path: Path, tmp_path: Pat
     fsm_to_in_position = [
         e
         for e in entries
-        if e.payload.get("event") == "FSM_TRANSITION"
-        and e.payload.get("to") == "InPosition"
+        if e.payload.get("event") == "FSM_TRANSITION" and e.payload.get("to") == "InPosition"
     ]
     assert len(fsm_to_in_position) >= 1
 

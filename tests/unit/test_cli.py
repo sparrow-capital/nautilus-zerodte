@@ -51,7 +51,6 @@ def test_paper_command_dry_run_smoke(tmp_path: Path) -> None:
 
 
 def test_flatten_command_smoke(tmp_path: Path) -> None:
-    journal_path = tmp_path / "flatten.jsonl"
     with patch.dict("os.environ", {}, clear=False):
         result = runner.invoke(
             app,
