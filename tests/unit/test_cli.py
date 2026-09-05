@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from nautilus_zerodte.cli.main import app
@@ -114,3 +115,119 @@ def test_research_catalog_command() -> None:
         assert result.exit_code == 0, result.stdout
         assert "Partitions analyzed: 1" in result.stdout
         assert "SPY.NYSE" in result.stdout
+
+
+# --- live execution gate -------------------------------------------------------------
+#
+# Live submission needs three independent opt-ins: the --live flag, allow_live in the
+# profile, and ZERODTE_ALLOW_LIVE in the environment. Each test below removes exactly one
+# and asserts the run is REFUSED, because two agreeing is not enough.
+
+LIVE_PROFILE_UPDATE = {"allow_live": True}
+
+
+def _profile_with(**update):
+    """Load the committed profile and patch it, so no live-enabled profile is committed."""
+    from nautilus_zerodte.config.loader import load_config
+
+    return load_config(PROFILE).model_copy(update=update)
+
+
+def test_live_refused_without_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ZERODTE_ALLOW_LIVE", raising=False)
+    with patch("nautilus_zerodte.cli.main.load_config") as mock_load:
+        mock_load.return_value = _profile_with(**LIVE_PROFILE_UPDATE)
+        with patch("nautilus_zerodte.cli.main.build_trading_node") as mock_build:
+            result = runner.invoke(app, ["paper", "-c", str(PROFILE), "--live"])
+    assert result.exit_code == 2, result.stdout
+    assert "REFUSING TO START" in result.output
+    assert "ZERODTE_ALLOW_LIVE" in result.output
+    mock_build.assert_not_called()
+
+
+def test_live_refused_without_profile_allow_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZERODTE_ALLOW_LIVE", "1")
+    with patch("nautilus_zerodte.cli.main.build_trading_node") as mock_build:
+        result = runner.invoke(app, ["paper", "-c", str(PROFILE), "--live"])
+    assert result.exit_code == 2, result.stdout
+    assert "allow_live" in result.output
+    mock_build.assert_not_called()
+
+
+def test_live_and_dry_run_are_mutually_exclusive() -> None:
+    with patch("nautilus_zerodte.cli.main.build_trading_node") as mock_build:
+        result = runner.invoke(app, ["paper", "-c", str(PROFILE), "--live", "--dry-run"])
+    assert result.exit_code == 2, result.stdout
+    mock_build.assert_not_called()
+
+
+def test_live_granted_with_all_three_opt_ins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZERODTE_ALLOW_LIVE", "1")
+    with patch("nautilus_zerodte.cli.main.load_config") as mock_load:
+        mock_load.return_value = _profile_with(**LIVE_PROFILE_UPDATE)
+        with patch("nautilus_zerodte.cli.main.build_trading_node") as mock_build:
+            mock_build.return_value = MagicMock()
+            result = runner.invoke(app, ["paper", "-c", str(PROFILE), "--live"])
+    assert result.exit_code == 0, result.stdout
+    assert "MODE: LIVE" in result.output
+    assert "REAL ORDERS WILL BE SUBMITTED" in result.output
+    # The strategies must be told to submit.
+    assert mock_build.call_args[0][0].dry_run is False
+
+
+def test_default_paper_run_is_observe_and_submits_nothing() -> None:
+    """No flags must never submit. This is the safe default the old code did not have."""
+    with patch("nautilus_zerodte.cli.main.build_trading_node") as mock_build:
+        mock_build.return_value = MagicMock()
+        result = runner.invoke(app, ["paper", "-c", str(PROFILE)])
+    assert result.exit_code == 0, result.stdout
+    assert "MODE: OBSERVE" in result.output
+    assert "NO orders are sent" in result.output
+    passed_config = mock_build.call_args[0][0]
+    assert passed_config.dry_run is True
+    assert passed_config.build_only is False
+
+
+def test_dry_run_is_build_only_and_never_runs_the_node() -> None:
+    with patch("nautilus_zerodte.cli.main.build_trading_node") as mock_build:
+        node = MagicMock()
+        mock_build.return_value = node
+        result = runner.invoke(app, ["paper", "-c", str(PROFILE), "--dry-run"])
+    assert result.exit_code == 0, result.stdout
+    assert "MODE: BUILD ONLY" in result.output
+    assert mock_build.call_args[0][0].build_only is True
+    node.run.assert_not_called()
+
+
+def test_mainnet_live_banner_warns_about_real_funds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The most dangerous combination must say so in words, not in a boolean."""
+    from nautilus_zerodte.cli.main import MODE_LIVE, _mode_banner
+
+    # Load the real Deribit profile rather than patching an adapter enum by hand -
+    # model_copy skips validation, so a hand-set string would not match production.
+    from nautilus_zerodte.config.loader import load_config
+
+    btc_profile = REPO_ROOT / "configs" / "profiles" / "paper_btc.yaml"
+    config = load_config(btc_profile).model_copy(update=LIVE_PROFILE_UPDATE)
+    config = config.model_copy(
+        update={"deribit": config.deribit.model_copy(update={"testnet": False})}
+    )
+    banner = _mode_banner(mode=MODE_LIVE, app_config=config, journal_path=Path("x.jsonl"))
+    assert "MAINNET" in banner
+    assert "Real funds" in banner
+
+
+def test_config_reaching_the_node_keeps_a_validated_adapter() -> None:
+    """The CLI mutates config with model_copy, which skips validation.
+
+    The banner branches on venue.adapter, so pin that the mode-resolution path cannot hand
+    build_trading_node a bare string. If a future model_copy starts updating `venue`, this
+    is what fails.
+    """
+    from nautilus_zerodte.models.enums import VenueAdapter
+
+    with patch("nautilus_zerodte.cli.main.build_trading_node") as mock_build:
+        mock_build.return_value = MagicMock()
+        result = runner.invoke(app, ["paper", "-c", str(PROFILE)])
+    assert result.exit_code == 0, result.stdout
+    assert isinstance(mock_build.call_args[0][0].venue.adapter, VenueAdapter)

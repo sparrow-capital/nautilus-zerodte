@@ -66,8 +66,13 @@ skip a tenet.
 4. **Gate-disabled configs are plumbing tests, never evidence.** Any config that relaxes a gate
    to pass a fixture says so in a comment, and the harness refuses to emit a tuning report from
    one. (`backtest_btc.yaml` currently sets `min_edge_after_cost_bps: -5000.0`.)
-5. **Live trading needs three independent opt-ins:** a profile, an explicit `--live` flag, and an
-   environment variable. `DRY_RUN` defaults to on. Testnet until the promotion checklist passes.
+5. **Live order submission needs three independent opt-ins:** `allow_live: true` in the profile,
+   the `--live` flag, and `ZERODTE_ALLOW_LIVE=1` in the environment. Missing any one means the run
+   is **refused, never silently downgraded**. Absent `--live`, `paper` runs in OBSERVE mode: the
+   node runs, gates evaluate, intents are journalled, nothing is submitted. Every run prints a
+   banner naming its mode before anything is built. Testnet until the promotion checklist passes.
+   (`DRY_RUN` does **not** default to on - see D10. `dry_run` means "do not submit"; defaulting it
+   on would make every backtest silently produce zero trades.)
 6. **No secrets in the repo.** `.env.example` documents names only. Keys are never logged or
    journaled, not even partially redacted.
 7. **UTC everywhere in code.** Local time exists only in reports rendered for a human.
