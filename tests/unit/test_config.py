@@ -74,21 +74,61 @@ def test_layered_risk_overlay(tmp_path: Path) -> None:
     assert config.strategy.underlying == "SPY.NYSE"
 
 
-def test_resolved_journal_path_default() -> None:
+def test_resolved_journal_path_default_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression PIN, not a guardrail.
+
+    It passes on both the old and the new resolver by design: it exists so the bare
+    default cannot drift while ZERODTE_RUNS_DIR is being added around it. The delenv is
+    load-bearing - without it the suite-wide autouse fixture turns this into an assertion
+    about the fixture.
+    """
+    monkeypatch.delenv("ZERODTE_RUNS_DIR", raising=False)
     config = AppConfig()
     assert config.resolved_journal_path() == Path("runs/latest.jsonl")
 
 
-def test_resolved_journal_path_custom_relative_uses_runs_dir() -> None:
+def test_resolved_journal_path_custom_relative_uses_runs_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ZERODTE_RUNS_DIR", raising=False)
     config = AppConfig(journal={"path": "custom/journal.jsonl"})
     base = Path("/tmp/test_runs")
     assert config.resolved_journal_path(base) == base / "custom/journal.jsonl"
 
 
-def test_resolved_journal_path_strips_runs_prefix() -> None:
+def test_resolved_journal_path_strips_runs_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ZERODTE_RUNS_DIR", raising=False)
     config = AppConfig(journal={"path": "runs/audit/trades.jsonl"})
     base = Path("/tmp/test_runs")
     assert config.resolved_journal_path(base) == base / "audit/trades.jsonl"
+
+
+def test_resolved_journal_path_uses_env_when_no_arg(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZERODTE_RUNS_DIR", "/tmp/env_runs")
+    config = AppConfig()
+    assert config.resolved_journal_path() == Path("/tmp/env_runs/latest.jsonl")
+
+
+def test_resolved_journal_path_explicit_arg_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZERODTE_RUNS_DIR", "/tmp/env_runs")
+    config = AppConfig()
+    base = Path("/tmp/explicit_runs")
+    assert config.resolved_journal_path(base) == base / "latest.jsonl"
+
+
+def test_absolute_journal_path_ignores_runs_dir_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An absolute journal.path is returned verbatim, whatever the base would have been.
+
+    Limit worth knowing: deleting the `is_absolute` early return does NOT turn this red,
+    because `Path("/a") / Path("/b")` is already `Path("/b")`. It goes red against a
+    resolver that joins by string concatenation, which is the regression it guards.
+    """
+    monkeypatch.setenv("ZERODTE_RUNS_DIR", "/tmp/env_runs")
+    config = AppConfig(journal={"path": "/var/audit/trades.jsonl"})
+    assert config.resolved_journal_path() == Path("/var/audit/trades.jsonl")
+    assert config.resolved_journal_path(Path("/tmp/explicit_runs")) == Path(
+        "/var/audit/trades.jsonl"
+    )
 
 
 def test_deep_merge_nested_dicts() -> None:

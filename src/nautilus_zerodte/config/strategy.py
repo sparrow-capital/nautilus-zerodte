@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -79,6 +80,28 @@ class SubscriptionConfig(BaseModel):
     chain_snapshot_interval_ms: int = 60_000
 
 
+def _resolve_under_runs(path_str: str, runs_dir: Path | None) -> Path:
+    """Resolve a run-artifact path against the runs directory.
+
+    Base precedence is explicit argument, then ZERODTE_RUNS_DIR, then "runs", so with the
+    variable unset the result is what it has always been.
+
+    The environment read lives here and not in `config/loader.py:_apply_env_overrides`
+    because a directly constructed `AppConfig()` never passes through the loader, and both
+    the test suite and library callers construct one that way. This function is the single
+    chokepoint every production caller of `resolved_journal_path` already funnels through,
+    so one guard here beats one guard per caller.
+    """
+    path = Path(path_str)
+    if path.is_absolute():
+        return path
+    base = runs_dir or Path(os.environ.get("ZERODTE_RUNS_DIR") or "runs")
+    relative = path
+    if path.parts and path.parts[0] == "runs":
+        relative = Path(*path.parts[1:]) if len(path.parts) > 1 else Path("latest.jsonl")
+    return base / relative
+
+
 class AppConfig(BaseModel):
     """Merged runtime configuration for backtest and live nodes."""
 
@@ -104,14 +127,7 @@ class AppConfig(BaseModel):
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
 
     def resolved_journal_path(self, runs_dir: Path | None = None) -> Path:
-        path = Path(self.journal.path)
-        if path.is_absolute():
-            return path
-        base = runs_dir or Path("runs")
-        relative = path
-        if path.parts and path.parts[0] == "runs":
-            relative = Path(*path.parts[1:]) if len(path.parts) > 1 else Path("latest.jsonl")
-        return base / relative
+        return _resolve_under_runs(self.journal.path, runs_dir)
 
     def resolved_strategies(self) -> list[StrategyRuntimeConfig]:
         if self.strategies:
