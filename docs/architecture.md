@@ -6,7 +6,7 @@ message flows that must remain stable.
 
 ## Config layering
 
-- **Primary source**: YAML in `configs/` (base → risk → strategy → profile).
+- **Primary source**: YAML in `configs/` (base -> risk -> strategy -> profile).
 - **Overlays**: fee + session overlays are selected based on `venue.adapter`.
 - **Env overrides**: a small set of environment variables is applied last in
   `src/nautilus_zerodte/config/loader.py` (see `README.md`).
@@ -20,7 +20,7 @@ message flows that must remain stable.
 
 ## Strategy FSM + gate pipeline (high level)
 
-Each strategy owns a small FSM (flat → evaluating → pending entry → in position).
+Each strategy owns a small FSM (flat -> evaluating -> pending entry -> in position).
 For entry signals:
 
 - Build a `ChainEvaluationContext` from either:

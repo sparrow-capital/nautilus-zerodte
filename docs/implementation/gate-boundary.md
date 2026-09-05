@@ -1,4 +1,4 @@
-# Gate boundary — pure vs NT greek gate split
+# Gate boundary - pure vs NT greek gate split
 
 **Status:** Accepted (Phase 2)
 
@@ -13,10 +13,10 @@ Split gate responsibilities into three layers:
 
 | Layer | Module | Pure? | Responsibility |
 | --- | --- | --- | --- |
-| Pre-greek gates | `gates/evaluator.py` → `evaluate_pre_greek()` | Yes | edge → liquidity → regime → session → operational |
+| Pre-greek gates | `gates/evaluator.py` -> `evaluate_pre_greek()` | Yes | edge -> liquidity -> regime -> session -> operational |
 | Greek snapshots | `BaseZeroDteStrategy` (Phase 3) | No | `self.greeks.portfolio_greeks(spot_shock=..., vol_shock=...)` |
-| Greek policy | `gates/evaluator.py` → `check_risk_policy()` | Yes | Limit math on `current_greeks` + `projected_greeks` |
-| NT pre-trade | NT `RiskEngine` | No | notional, rate, qty/price — always on, not reimplemented |
+| Greek policy | `gates/evaluator.py` -> `check_risk_policy()` | Yes | Limit math on `current_greeks` + `projected_greeks` |
+| NT pre-trade | NT `RiskEngine` | No | notional, rate, qty/price - always on, not reimplemented |
 
 ## Strategy orchestration pattern (Phase 3)
 
@@ -27,7 +27,7 @@ if not result.passed: journal + return
 projected = self.greeks.portfolio_greeks(...)  # NT
 assessment = check_risk_policy(policy, current, projected)  # pure
 if not assessment.passed: journal + return
-submit_order_list(...)                         # NT RiskEngine → ExecutionEngine
+submit_order_list(...)                         # NT RiskEngine -> ExecutionEngine
 ```
 
 ## Operational gate checklist
@@ -42,17 +42,17 @@ Implemented in `config/schema.py` (`OperationalConfig`) and evaluated in `gates/
 | Daily loss budget | `daily_loss_breached` | Optional; block when `True` |
 | Feed / adapter health | `feed_healthy` | Fail closed when `False` |
 
-Default: **no trade** until all checks pass. Each failure → journal at the matching `GateStage`.
+Default: **no trade** until all checks pass. Each failure -> journal at the matching `GateStage`.
 
-## Actor → gate → journal path (Phase 2)
+## Actor -> gate -> journal path (Phase 2)
 
 ```
 SessionActor / RegimeActor
-  → msgbus.publish(SessionPhaseSnapshot / RegimeTagSnapshot)
+  -> msgbus.publish(SessionPhaseSnapshot / RegimeTagSnapshot)
 GatedSkeletonStrategy (Phase 2) / BaseZeroDteStrategy (Phase 3)
-  → msgbus.subscribe + build GateContext from actor snapshots
-  → evaluate_pre_greek(intent, context)
-  → journal GATE_REJECT or proceed to greek check
+  -> msgbus.subscribe + build GateContext from actor snapshots
+  -> evaluate_pre_greek(intent, context)
+  -> journal GATE_REJECT or proceed to greek check
 ```
 
 Note: NT `publish_data` requires `Data` subclasses; actor context uses MessageBus topics with plain dataclass payloads instead.
@@ -66,9 +66,9 @@ Note: NT `publish_data` requires `Data` subclasses; actor context uses MessageBu
 
 ## Phase 3 handoff
 
-1. Implement `strategies/base.py` — FSM with gate orchestration pattern above.
-2. Implement `ReferenceZeroDteStrategy` — subscriptions, intent, `OrderList` submit.
+1. Implement `strategies/base.py` - FSM with gate orchestration pattern above.
+2. Implement `ReferenceZeroDteStrategy` - subscriptions, intent, `OrderList` submit.
 3. Wire `--dry-run` to journal intent and skip submit.
 4. On `on_order_filled`: journal `FILL` + realized PnL from NT `Portfolio`.
 5. Replace `GatedSkeletonStrategy` in factory via config-driven `strategy_class: reference`.
-6. Integration test: full journal trail gates → order → fill → PnL.
+6. Integration test: full journal trail gates -> order -> fill -> PnL.

@@ -1,6 +1,12 @@
 # Learning attribution (Phase 6)
 
-Rule-based PnL decomposition on 0DTE fills. No ML — `LearningModule.calibrate()` is a
+> **STATUS: as-built, and known incomplete.** This file describes what the code does today.
+> The specification is `docs/quant/attribution.md`, which lists defects A1-A6 - most importantly
+> that there is **no delta term**, greeks are frozen at fill, and the Deribit inverse-contract
+> cross term and perpetual funding are both absent. Do not treat the decomposition below as the
+> target. Attribution output is diagnostic only until those are fixed.
+
+Rule-based PnL decomposition on 0DTE fills. No ML - `LearningModule.calibrate()` is a
 placeholder hook for future policy tuning.
 
 ## Scope
@@ -9,7 +15,7 @@ placeholder hook for future policy tuning.
 | --- | --- | --- |
 | `commission` | `OrderFilled.commission` | Backtest via NT `MakerTakerFeeModel`; live from venue |
 | `slippage_bps` | Fill price vs quote mid at submit | Separate from spread cost in pre-trade edge |
-| `theta_pnl` | Rule: `theta * hold_hours / 24` | 0DTE — small; uses portfolio greeks at fill |
+| `theta_pnl` | Rule: `theta * hold_hours / 24` | 0DTE - small; uses portfolio greeks at fill |
 | `gamma_pnl` | Rule: `0.5 * gamma * (dS)^2` | `dS` = underlying move since entry quote |
 | `vega_pnl` | Rule: `vega * dIV` | `dIV` from leg greeks delta when available |
 | `edge_predicted_bps` | `TradeIntent.edge_after_cost_bps` | Pre-trade estimate from fee schedule + quotes |
@@ -35,6 +41,6 @@ Grep: `"event": "LEARNING_RECORD"`.
 
 ## Non-goals (Phase 6)
 
-- IB per-contract `FixedFeeModel` — Phase 8 ✓
-- ML calibration — `calibrate()` returns empty adjustments
-- Multi-strategy attribution fan-in — Phase 7
+- IB per-contract `FixedFeeModel` - Phase 8 (done)
+- ML calibration - `calibrate()` returns empty adjustments
+- Multi-strategy attribution fan-in - Phase 7

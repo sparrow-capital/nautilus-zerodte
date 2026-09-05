@@ -1,10 +1,18 @@
 ---
-description: Minimal project standards for nautilus-zerodte.
+description: Project standards for nautilus-zerodte. Pointer only - the rules live in CLAUDE.md.
 alwaysApply: true
 ---
 # nautilus-zerodte
 
-- Python 3.14+, managed with `uv` (`pyproject.toml` + `uv lock`).
-- NautilusTrader is the trading engine — do not re-implement matching, order books, or event loops.
-- No secrets in source control. Use `.env.example` to document env var names; values come from the environment.
-- Add tests when adding behavior, not before.
+**The rules are in `CLAUDE.md` at the repo root, and are routed from `INDEX.md`.** Read those.
+Do not duplicate rules here; a second copy is a copy that goes stale.
+
+Minimum context if you read nothing else:
+
+- Python 3.14+, managed with `uv` (`pyproject.toml` + `uv.lock`).
+- NautilusTrader is the trading engine. Do not reimplement matching, order books, or event loops.
+- No secrets in source control. `.env.example` documents names; values come from the environment.
+- **Every change lands with its tests in the same pass**, and a bug fix gets a test that fails on
+  the unfixed code. See `docs/testing.md`.
+- `ponytail.mdc` governs how much code you write. `CLAUDE.md` governs what it must guarantee.
+  Where they conflict, `CLAUDE.md` wins.

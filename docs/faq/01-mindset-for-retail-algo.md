@@ -1,6 +1,6 @@
-# 01 — Mindset for retail algo
+# 01 - Mindset for retail algo
 
-**Overview.** Most early confusion is not math. It is mixing up *retail survival*, *prop/HFT careers*, and *building software for its own sake*. Distilled from three r/algotrading threads you clipped (2020–2018). Treat anonymous claims of returns as noise; keep the mental models.
+**Overview.** Most early confusion is not math. It is mixing up *retail survival*, *prop/HFT careers*, and *building software for its own sake*. Distilled from three r/algotrading threads you clipped (2020-2018). Treat anonymous claims of returns as noise; keep the mental models.
 
 ## Key questions these notes answered
 
@@ -10,7 +10,7 @@
 
 ## Distilled answers
 
-### 1. Advanced math is useful — not a gate
+### 1. Advanced math is useful - not a gate
 
 **Mental model:** Retail edge and institutional edge are different games.
 
@@ -21,11 +21,11 @@
 
 You need enough stats to *not fool yourself* (distributions, sample size, overfitting). You do not need stochastic calculus on day one.
 
-Nuance worth keeping: "mathematically simple" ≠ "algorithmically simple." A system can use high-school math and still be carefully engineered (state, risk, data hygiene).
+Nuance worth keeping: "mathematically simple" != "algorithmically simple." A system can use high-school math and still be carefully engineered (state, risk, data hygiene).
 
-Also: **algo trading ≠ quantitative research career**. Firms often hire PhDs for *hypothesis discipline*, not because every strategy needs exotic math. Linear regression still shows up in serious shops.
+Also: **algo trading != quantitative research career**. Firms often hire PhDs for *hypothesis discipline*, not because every strategy needs exotic math. Linear regression still shows up in serious shops.
 
-### 2. "If it worked it wouldn't be published" — half true
+### 2. "If it worked it wouldn't be published" - half true
 
 **Mental model:** Techniques are mostly public. *Combinations* are private.
 
@@ -40,7 +40,7 @@ What is public and still useful:
 - Building blocks (factors, TA as features, basic ML, walk-forward ideas)
 - Infrastructure patterns and failure modes
 
-So: read papers and blogs for *parts*. Edge comes from fitting parts to **your** instruments, costs, and horizon — then proving it out of sample.
+So: read papers and blogs for *parts*. Edge comes from fitting parts to **your** instruments, costs, and horizon - then proving it out of sample.
 
 Implication for you: stop hunting for one secret Reddit strategy. Start a research loop (Chapter 02) on Deribit BTC options / the market you commit to.
 
@@ -50,11 +50,11 @@ The sharpest line from the "final words" thread:
 
 > Work on your alpha. Trading frameworks come after.
 
-You already have a serious framework (NautilusTrader + this repo). That is an advantage *only if* you use it to test hypotheses and review fills — not to polish architecture instead of learning the market.
+You already have a serious framework (NautilusTrader + this repo). That is an advantage *only if* you use it to test hypotheses and review fills - not to polish architecture instead of learning the market.
 
 Related beginner traps from those threads:
 
-- Treating crypto as magically different (it is another asset class; data access is often easier — useful for learning)
+- Treating crypto as magically different (it is another asset class; data access is often easier - useful for learning)
 - Jumping to deep ML before you can measure a simple signal honestly
 - Confusing "intraday" with "HFT" (true HFT is latency/hardware territory; most retail "intraday" is not)
 - Asking strangers for their edge (money is involved; process talk is fine, features are not)
@@ -65,9 +65,9 @@ Anonymous "I make six figures" posts are unfalsifiable. Prefer metrics you can c
 
 ## How this maps to nautilus-zerodte
 
-- You already journal and attribute learning — use that as the feedback loop, not more Medium posts.
+- You already journal and attribute learning - use that as the feedback loop, not more Medium posts.
 - Gate / fee / slippage work is the retail version of "sophisticated firms win on infrastructure": make costs visible before chasing fancier signals.
-- Pick one market commitment (BTC options on Deribit vs equities elsewhere) and stay long enough to learn — switching markets resets the clock.
+- Pick one market commitment (BTC options on Deribit vs equities elsewhere) and stay long enough to learn - switching markets resets the clock.
 
 ## One-week practice (novice)
 
@@ -78,6 +78,6 @@ Anonymous "I make six figures" posts are unfalsifiable. Prefer metrics you can c
 
 ## Sources
 
-- [Advanced math is not required…](https://www.reddit.com/r/algotrading/comments/g052ly/) (raw: `inbox/processed/`)
+- [Advanced math is not required...](https://www.reddit.com/r/algotrading/comments/g052ly/) (raw: `inbox/processed/`)
 - [Some final words](https://www.reddit.com/r/algotrading/comments/96mjt2/)
-- ["If something really works…"](https://www.reddit.com/r/algotrading/comments/elva48/)
+- ["If something really works..."](https://www.reddit.com/r/algotrading/comments/elva48/)

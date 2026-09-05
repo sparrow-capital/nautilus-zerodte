@@ -1,6 +1,6 @@
 # Minimal Deribit NT Parquet catalog fixture for Phase 5 backtests.
 
-Committed slice for BacktestNode integration — no secrets, no live data.
+Committed slice for BacktestNode integration - no secrets, no live data.
 
 ## Contents
 
