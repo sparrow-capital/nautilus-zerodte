@@ -192,3 +192,40 @@ def test_per_strategy_reference_override() -> None:
         )
         == "SPY"
     )
+
+
+# --- adapter enum invariant ----------------------------------------------------------
+#
+# The CLI banner branches on `venue.adapter` to decide whether to print TESTNET/MAINNET.
+# That relies on every loaded config carrying a validated VenueAdapter rather than a bare
+# string. These pin the invariant instead of assuming it: one proves loading validates,
+# one proves an invalid value is refused rather than passed through.
+
+
+def test_every_committed_profile_loads_adapter_as_enum() -> None:
+    from nautilus_zerodte.config.loader import load_config
+    from nautilus_zerodte.models.enums import VenueAdapter
+
+    profiles = sorted((Path(__file__).resolve().parents[2] / "configs" / "profiles").glob("*.yaml"))
+    assert profiles, "no profiles found - the glob is wrong, not the configs"
+    for profile in profiles:
+        adapter = load_config(profile).venue.adapter
+        assert isinstance(adapter, VenueAdapter), (
+            f"{profile.name} loaded venue.adapter as {type(adapter).__name__}, not VenueAdapter"
+        )
+
+
+def test_unknown_venue_adapter_is_refused_at_load(tmp_path: Path) -> None:
+    """An adapter we cannot wire must fail at load, not surface later as a bare string."""
+    import pytest
+    from pydantic import ValidationError
+
+    from nautilus_zerodte.config.loader import load_config
+
+    profile = tmp_path / "bad.yaml"
+    profile.write_text(
+        "trader_id: BAD-001\nvenue:\n  name: NOPE\n  adapter: NOT_A_VENUE\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        load_config(profile)

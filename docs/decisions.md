@@ -156,3 +156,37 @@ there. It is function-scoped so the failure names the offending test rather than
 **Reversal condition.** `JournalEntry` grows a provenance field and every writer sets it, so a
 test-written record is distinguishable from a real one - at which point the seam is still worth
 keeping for tidiness but the tripwire could be relaxed to a warning.
+
+---
+
+## D10 - `dry_run` means "do not submit"; live submission is gated by three opt-ins
+**2026-09-06**
+
+**Decision.** Split the two meanings `dry_run` carried. `dry_run` now means only "strategies
+journal the intent and do not submit an order"; `build_only` is the separate concern of
+constructing the node and exiting. `paper` has three named modes - OBSERVE (default: the node
+runs, gates evaluate, intents are journalled, nothing is submitted), BUILD ONLY (`--dry-run`),
+and LIVE (`--live`). LIVE requires all three of `allow_live: true` in the profile, the `--live`
+flag, and `ZERODTE_ALLOW_LIVE=1`; any missing opt-in **refuses the run with exit code 2 and names
+what is missing**, and never silently downgrades to OBSERVE. Every run prints a banner naming its
+mode, venue and testnet/mainnet before anything is constructed. Hard rule 5 in `CLAUDE.md` is
+amended accordingly.
+
+**Why.** Hard rule 5 previously said "`DRY_RUN` defaults to on". That was incoherent. `dry_run`
+also drives `_handle_dry_run_intent` in `strategies/base.py`, so defaulting it on would make every
+backtest journal `DRY_RUN_INTENT` and simulate no fills at all - producing runs with gates passing,
+zero trades and no PnL, which read as "the strategy found no edge" rather than "execution was
+switched off". A silently switched-off evaluation loop is worse than a loud failure.
+
+The rule's intent was right and was attached to the wrong flag: the dangerous default is live
+submission, not backtest execution. And the rule's other half was simply unimplemented - it
+promised an explicit `--live` flag that did not exist, so `paper` connected and submitted whenever
+`dry_run` was false and credentials happened to be present. That is one accidental condition, not
+three deliberate ones. OBSERVE also fills a real gap: `paper` previously had no mode that ran the
+node without submitting, which is what paper trading means.
+
+**Reversal condition.** If OBSERVE proves unable to connect for market data without execution
+credentials on some venue, it needs a per-venue answer rather than a fourth mode. If the
+three-opt-in gate is routinely satisfied by an exported shell variable plus a habitual flag, the
+env var has stopped being an independent signal and should be replaced by an interactive
+confirmation of the traded notional.
