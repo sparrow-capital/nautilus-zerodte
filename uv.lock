@@ -5,6 +5,9 @@ requires-python = ">=3.14"
 [options]
 prerelease-mode = "allow"
 
+[manifest]
+constraints = [{ name = "protobuf", specifier = ">=5.29.6" }]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
