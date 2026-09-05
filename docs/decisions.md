@@ -130,3 +130,29 @@ changes.
 **Reversal condition.** The routing proves lossy in practice - sessions repeatedly miss a rule
 because it was one hop away - in which case promote the specific missed rules into `CLAUDE.md`
 rather than abandoning the tiering.
+
+---
+
+## D9 - Run artifacts resolve under ZERODTE_RUNS_DIR, with an autouse tripwire in tests
+**2026-09-05**
+
+**Decision.** `AppConfig.resolved_journal_path` resolves relative paths against
+`ZERODTE_RUNS_DIR` when that variable is set, falling back to `runs/`. Precedence is explicit
+argument, then the variable, then `runs/`. The read happens in the resolver in
+`config/strategy.py`, not in `config/loader.py:_apply_env_overrides`. `tests/conftest.py` sets
+the variable per test and adds a second autouse fixture that fails any test which writes into
+the repo's own `runs/`.
+
+**Why.** Running the suite from the repo root appended NODE_START, NODE_STOP and a WARN-level
+FLATTEN_REQUEST to `runs/latest.jsonl` - the operator's real audit trail, same schema, no
+provenance marker, because `JournalEntry` is frozen and carries no test flag. The env read has
+to sit in the resolver because a directly constructed `AppConfig()` never passes through the
+loader, and that is exactly what the tests do. The resolver is also the single chokepoint every
+production caller already funnels through, so one guard there beats one per caller. The seam
+alone is not enough: the strategy and actor configs default to the literal string
+`runs/latest.jsonl` and never call the resolver, so the tripwire is what catches a regression
+there. It is function-scoped so the failure names the offending test rather than the suite.
+
+**Reversal condition.** `JournalEntry` grows a provenance field and every writer sets it, so a
+test-written record is distinguishable from a real one - at which point the seam is still worth
+keeping for tidiness but the tripwire could be relaxed to a warning.

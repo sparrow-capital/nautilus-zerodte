@@ -115,6 +115,9 @@ uv run nautilus-zerodte journal summary --path runs/latest.jsonl
 
 Config layering: `base -> risk -> strategy -> profile`, then venue-selected fee and session
 overlays, then a small set of environment overrides applied last in `config/loader.py`.
+Run artifacts resolve under `ZERODTE_RUNS_DIR` when it is set, otherwise `runs/`; the
+resolver in `config/strategy.py` reads it, not the loader, because a directly constructed
+`AppConfig()` never sees the loader (D9).
 
 ```
 src/nautilus_zerodte/

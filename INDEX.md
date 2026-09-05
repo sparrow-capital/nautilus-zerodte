@@ -20,7 +20,9 @@ removed.
 | `docs/tenets.md` | T1-T12 in full: the rule, why it exists, what it forbids, and how it is enforced (grep, test, or CI job). | You want to argue with a tenet, apply one to a grey case, or add enforcement for one. |
 | `docs/engineering.md` | The high-throughput baseline: concurrency model, state ownership, bounded queues and backpressure, latency budgets, idempotency and crash-only recovery, observability, security. | Touching the order path, an actor, a queue, a reconnect path, or anything with a latency or memory profile. |
 | `docs/testing.md` | The seven test layers, the rules for each, and the definition of done. | Writing or changing any test, or deciding whether a change is finished. |
+| `tests/conftest.py` | Suite-wide autouse isolation: run artifacts redirected to `tmp_path` via `ZERODTE_RUNS_DIR`, plus the tripwire that fails any test writing into the repo's `runs/`. | Adding a test that writes run artifacts, or the runs/ tripwire fails and you need to know why. |
 | `docs/evidence.md` | The run manifest, the hash chain, and what makes a result admissible. | Citing a number, comparing two runs, or wondering whether a result can be trusted. |
+| `docs/killswitch_plan.md` | **A PLAN, not a description of the code.** The full kill-switch design: what NautilusTrader already provides, the ordering on trip, tasks H0-H9 with their tests, deferred items with reasons, and open questions. Marked NOT IMPLEMENTED throughout. | Picking up the kill-switch work, or checking why an approach was chosen or rejected. Never cite it as evidence a control exists. |
 | `docs/decisions.md` | Decision log. Each entry carries the decision, the reasoning, and the **reversal condition**. | Asking "why is it like this", or making a decision that future sessions must not silently undo. |
 
 ## The quant subtree - load as a set when doing math or money

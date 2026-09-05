@@ -51,15 +51,14 @@ def test_paper_command_dry_run_smoke(tmp_path: Path) -> None:
 
 
 def test_flatten_command_smoke(tmp_path: Path) -> None:
-    with patch.dict("os.environ", {}, clear=False):
-        result = runner.invoke(
-            app,
-            [
-                "flatten",
-                "-c",
-                str(PROFILE),
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "flatten",
+            "-c",
+            str(PROFILE),
+        ],
+    )
     assert result.exit_code == 0, result.stdout
     assert "Flatten request recorded" in result.stdout
 
