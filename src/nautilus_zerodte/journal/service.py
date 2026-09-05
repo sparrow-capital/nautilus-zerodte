@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from nautilus_zerodte.models.enums import GateStage
 from nautilus_zerodte.models.journal import JournalEntry
 
@@ -133,11 +135,22 @@ class Journal:
             return []
         entries: list[JournalEntry] = []
         with journal_path.open(encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
+            for raw_line in handle:
+                # `_append_jsonl` always terminates a complete record with "\n", so only the
+                # final line of a file can lack one, and when it does we caught the writer
+                # mid-append. A reader polling a journal a running node is writing to hits
+                # this in normal operation. Damage anywhere else is real corruption of the
+                # evidence chain (docs/evidence.md) and must surface, not be swallowed.
+                torn = not raw_line.endswith("\n")
+                line = raw_line.strip()
                 if not line:
                     continue
-                entries.append(JournalEntry.model_validate_json(line))
+                try:
+                    entries.append(JournalEntry.model_validate_json(line))
+                except ValidationError:
+                    if torn:
+                        break
+                    raise
         return entries
 
     def summary(self) -> dict[str, Any]:
