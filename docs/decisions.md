@@ -190,3 +190,132 @@ credentials on some venue, it needs a per-venue answer rather than a fourth mode
 three-opt-in gate is routinely satisfied by an exported shell variable plus a habitual flag, the
 env var has stopped being an independent signal and should be replaced by an interactive
 confirmation of the traded notional.
+
+---
+
+## D11 - Combo-first atomic close, with short-leg-first leg-by-leg as the fallback (reverses "leg-by-leg unconditionally")
+**2026-09-06**
+
+**Decision.** The emergency flatten attempts an **atomic close on the combo instrument first** -
+one aggressive reduce-only LIMIT order priced through the implied touch, with a bounded
+reprice-and-retry loop - and only on exhaustion, rejection, or an unavailable combo book falls
+back to closing the legs individually, **short leg first**. Never the reverse order of
+preference, and the fallback is mandatory rather than optional. The design is written up as H3 in
+`docs/killswitch_plan.md`; **none of it is implemented**, and `docs/quant/risk.md` still records
+the operator kill switch as NOT IMPLEMENTED.
+
+**This reverses a previous position and the reversal is the point.** Open question 2 in
+`docs/killswitch_plan.md` was answered "leg-by-leg unconditionally, because a kill switch should
+be dumb", and the H3 task was written that way. That is overturned.
+
+**Why.** **Deribit portfolio margin can wedge a sequential unwind.** Closing one leg of a hedged
+pair raises the initial margin requirement on what remains, and can reject the second reduce-only
+order with "Not Enough Funds". That does not merely leave the account briefly exposed - it turns a
+transient naked short call into a **stuck** naked short call, at 0DTE, with the operator already
+pressing the emergency stop. Portfolio margin is exactly the regime this strategy trades in, and
+`docs/quant/risk.md` section 3 already records that collateral revalues with the position on
+coin-settled products. That failure mode is worse in kind, not merely in degree, than the risk
+the old decision was protecting against.
+
+The old argument was real and is not dismissed: an emergency-only fallback path is the
+least-tested code in the system, it runs only when something has already gone wrong, and a
+kill switch that is simple is a kill switch you can reason about at 3am. It is outweighed, and the
+mitigation is written into H3: the fallback is exercised by a unit test that forces the combo
+close to fail, on every run, rather than only by an integration test that takes the happy path.
+
+Three secondary facts constrain the shape and are worth recording because they are easy to get
+wrong. The atomic close cannot be a market order: `private/close_position` accepts only `type`
+`limit|market`, NT's Deribit adapter implements **no `close_position` method at all** (the string
+appears only in a rate-limit bucket), and Deribit's knowledge base says option combos support the
+limit type only - a claim that is **second-hand** (support.deribit.com returns 403) and in tension
+with the normative reference, which excludes only the trigger types
+("stop_limit, stop_market, take_limit, take_market, and trailing_stop ... are not supported for
+option and option_combo instruments") for combos. We design for limit-only because it is the
+assumption that is safe if it is wrong. The retry loop is bounded because an unbounded reprice on
+a 0DTE combo is a market order with no ceiling. And the combo close can vanish without warning:
+Deribit deactivates low-volume combo books (**error 13035**) into FIX `SecurityStatus 3`,
+"inactive (no new orders, edits, or cancellations)", which is why the fallback cannot be optional.
+
+**Reversal condition.** Any of three observations. (1) The testnet probe in H3.5 shows Deribit
+rejects `reduce_only` on an `option_combo` order, or that combo books for 0DTE strikes are
+routinely too illiquid for an aggressive limit to fill inside the retry budget - at which point
+the combo attempt becomes a wasted round trip during an emergency and leg-by-leg becomes the
+primary path again, with the margin hazard handled by holding explicit margin headroom instead.
+(2) The portfolio-margin wedge fails to reproduce on testnet when one leg of a filled combo is
+closed - the "Not Enough Funds" rejection is documented for hedged pairs generally, is
+second-hand, and has never been observed on a combo specifically, so it is the load-bearing claim
+here and the one most worth falsifying. (3) NautilusTrader's Deribit adapter gains per-leg fill
+synthesis and a working `close_position` (upstream issue #4329), at which point the whole
+sequence collapses into NT's own `market_exit` and this entry is deleted rather than reversed.
+
+---
+
+## D12 - Short-leg-first is a hard ordering rule, and no unwind iterates a set
+**2026-09-06**
+
+**Decision.** Whenever any code path closes the legs of a structure individually, it closes the
+**short leg first** - buy back the short call, then sell the long. The leg collection is an
+**ordered** structure sorted short-risk-first from the signed leg amounts returned by
+`public/get_combos`; a Python `set` is never iterated to decide unwind order. This applies to the
+D11 fallback, to any future hedge unwind, and to anything else that legs out.
+
+**Why.** The wrong order leaves the account **naked short a call** - unbounded loss, on a 0DTE
+structure, during whatever event caused the flatten. NT's `market_exit` iterates
+`for instrument_id in instruments:` over a `cdef set[InstrumentId]`
+(`trading/strategy.pyx:1780-1794`), so the order is arbitrary and hash-dependent. If
+reconciliation ever materialises the two Deribit leg positions - which it does if the per-leg user
+trade does not inherit the parent combo order's `label`, a fact that is **NOT FOUND** in Deribit's
+spec - then NT legs out in hash order and can produce that naked short by itself.
+
+The reason this is a rule rather than an optimisation is that it is **cheap and unconditional**.
+It is a sort, it costs nothing, and it makes the hazard impossible **regardless of how the venue
+position question resolves** (92% two leg positions, with a real residual 8% - see H3.0 in
+`docs/killswitch_plan.md`). A guarantee that does not depend on an unresolved fact is worth more
+than one that does, so this lands whether or not the H3.5 probes are ever run.
+
+**Reversal condition.** A structure appears whose short leg genuinely cannot be closed first -
+for example one where the short is the illiquid leg and buying it back first reliably fails,
+leaving the hedge intact but the order sitting. That is a real case for some structures and it
+would need a per-structure ordering rule with its own test, not a return to arbitrary order.
+Arbitrary order is never correct again.
+
+---
+
+## D13 - Spread exposure is tracked from OrderFilled, not read from the position cache
+**2026-09-06**
+
+**Decision.** For spread instruments, the strategy maintains its own signed per-instrument
+exposure record, updated only in `on_order_filled` from the `OrderFilled` events NautilusTrader
+does emit on the spread instrument. The flatten path, the flatness verification in
+`post_market_exit`, and the EXITING -> FLAT transition all read that record **in addition to**
+`Cache.orders_open`, `Cache.orders_inflight`, `Cache.positions_open` and
+`Portfolio.is_completely_flat()`. `cache.positions_open()` is never the sole source of exposure.
+
+**Why.** NautilusTrader 1.229.0 creates **no `Position` object at all** for a spread fill.
+`CryptoOptionSpread` carries `InstrumentClass.OPTION_SPREAD`, so `Instrument.is_spread()` is true,
+and the ExecutionEngine skips the position lifecycle (`execution/engine.pyx:1653`); the upstream
+docs state it plainly - "Positions are not created for spread instruments"
+(`docs/concepts/positions.md:445`). `market_exit()` builds its instrument set from
+`cache.positions_open()` plus open and in-flight orders
+(`trading/strategy.pyx:1780-1794`), so a filled combo whose orders have all completed contributes
+nothing to it. `strategies/reference.py:150-167` trades the Deribit vertical as one combo
+instrument, so today a filled combo plus `flatten_positions` would produce a journal that says
+flat and an account that is not. NT expects the adapter to synthesise per-leg fills - Interactive
+Brokers does (`_generate_leg_fill`, `-LEG-` client-order-id convention) - and the Deribit adapter
+has zero occurrences of combo, leg or spread in its execution path. Upstream issue **#4329**
+acknowledges the gap.
+
+This is deliberately a small record - a dict of `InstrumentId` to signed `Decimal`, mutated in one
+callback and read in three places. It is not a reimplementation of `Portfolio`, and it does not
+touch the clock, a queue or a scheduler. It exists only because the engine declines to create the
+object for this instrument class, which is precisely the T1 case: name the upstream capability
+stood in for, and name what lets us delete the wrapper.
+
+**Reversal condition.** The NautilusTrader Deribit adapter emits synthetic per-leg fills, or the
+ExecutionEngine creates positions for spread instruments (upstream issue #4329 resolved). Either
+one makes `cache.positions_open()` sufficient, at which point this record is **deleted**, not kept
+as belt-and-braces - two sources of truth for exposure is its own defect. A partial reversal also
+applies if the H3.5 testnet probe shows Deribit's per-leg user trades do NOT carry the parent
+order's `label`: reconciliation then materialises real leg positions and the record becomes a
+cross-check against them rather than the only view, which changes what `post_market_exit` should
+do on a disagreement between the two.
