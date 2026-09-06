@@ -38,7 +38,7 @@ class ReferenceZeroDteStrategyConfig(BaseZeroDteStrategyConfig, frozen=True):
 
 
 class ReferenceZeroDteStrategy(BaseZeroDteStrategy):
-    """Minimal 0DTE reference strategy — plumbing validation, not production edge."""
+    """Minimal 0DTE reference strategy - plumbing validation, not production edge."""
 
     def __init__(self, config: ReferenceZeroDteStrategyConfig) -> None:
         super().__init__(config)

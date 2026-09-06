@@ -37,7 +37,7 @@ class GateThresholdsConfig(BaseModel):
 
 
 class FeeScheduleConfig(BaseModel):
-    """Venue fee schedule — single source for edge gate and BacktestVenueConfig FeeModel."""
+    """Venue fee schedule - single source for edge gate and BacktestVenueConfig FeeModel."""
 
     model: str = "maker_taker"
     maker_fee: float = 0.0003
@@ -61,7 +61,7 @@ class InteractiveBrokersConfig(BaseModel):
 
 
 class StreamCaptureConfig(BaseModel):
-    """Operator path for NT StreamingFeatherWriter — off by default."""
+    """Operator path for NT StreamingFeatherWriter - off by default."""
 
     enabled: bool = False
     stream_path: str = "data/streaming/latest"
@@ -83,7 +83,7 @@ class IngestionBudgetConfig(BaseModel):
 
 
 class IngestionConfig(BaseModel):
-    """Optional subscription planner — emits plans only, no fetch logic."""
+    """Optional subscription planner - emits plans only, no fetch logic."""
 
     enabled: bool = False
     budget: IngestionBudgetConfig = Field(default_factory=IngestionBudgetConfig)

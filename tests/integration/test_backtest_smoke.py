@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from nautilus_trader.adapters.deribit import DERIBIT
 
+from conftest import require_catalog
 from nautilus_zerodte.config.loader import load_config
 from nautilus_zerodte.journal.service import Journal
 from nautilus_zerodte.node.factory import build_backtest_node, build_trading_node, run_backtest
@@ -17,9 +18,7 @@ PAPER_BTC_PATH = REPO_ROOT / "configs" / "profiles" / "paper_btc.yaml"
 
 @pytest.fixture
 def catalog_path() -> Path:
-    if not CATALOG_PATH.exists():
-        pytest.skip("Catalog fixture not built — run scripts/build_catalog_fixture.py")
-    return CATALOG_PATH
+    return require_catalog(CATALOG_PATH)
 
 
 def test_build_backtest_node(catalog_path: Path, tmp_path: Path) -> None:
@@ -28,7 +27,15 @@ def test_build_backtest_node(catalog_path: Path, tmp_path: Path) -> None:
         update={"journal": config.journal.model_copy(update={"path": str(tmp_path / "bt.jsonl")})}
     )
     node = build_backtest_node(config, catalog_path)
-    assert node is not None
+
+    # `build_backtest_node` raises on failure, so `node is not None` could never fail. Assert
+    # what the config was supposed to produce instead: the run must carry OUR trader id, OUR
+    # venue, and exactly the strategies and data configs we asked for.
+    run = node.configs[0]
+    assert str(run.engine.trader_id) == config.trader_id
+    assert [str(v.name) for v in run.venues] == [config.venue.name]
+    assert len(run.engine.strategies) == 1
+    assert len(run.data) == 1
 
 
 def test_backtest_lifecycle_journal(catalog_path: Path, tmp_path: Path) -> None:

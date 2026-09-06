@@ -98,7 +98,7 @@ _PRE_GREEK_STAGES: tuple[tuple[GateStage, object], ...] = (
 
 
 def evaluate_pre_greek(intent: TradeIntent, context: GateContext) -> GateResult:
-    """Pure pre-greek gate pipeline: edge → liquidity → regime → session → operational."""
+    """Pure pre-greek gate pipeline: edge -> liquidity -> regime -> session -> operational."""
     for _stage, evaluator in _PRE_GREEK_STAGES:
         result = evaluator(intent, context)  # type: ignore[operator]
         if not result.passed:
@@ -113,7 +113,7 @@ def check_risk_policy(
     *,
     intent_id: UUID | None = None,
 ) -> RiskAssessment:
-    """Pure greek limit check — call site wrapper per gate-boundary ADR."""
+    """Pure greek limit check - call site wrapper per gate-boundary ADR."""
     return policy.check(
         current_greeks,
         projected_greeks,

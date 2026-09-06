@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class SubscriptionSpec:
-    """Planned NT subscription — tier and interval only; no fetch logic."""
+    """Planned NT subscription - tier and interval only; no fetch logic."""
 
     instrument_id: str
     tier: str

@@ -82,7 +82,7 @@ def _build_learning_record(
 
 
 class LearningModule:
-    """Rule-based fill attribution — commission, slippage, greek decomposition."""
+    """Rule-based fill attribution - commission, slippage, greek decomposition."""
 
     def __init__(self, journal: Journal, *, strategy_id: str) -> None:
         self._journal = journal
@@ -157,5 +157,5 @@ class LearningModule:
         return record
 
     def calibrate(self) -> dict[str, Any]:
-        """Rule-based hook for future policy tuning — no ML in Phase 6."""
-        return {"adjustments": {}, "note": "calibrate stub — Phase 6"}
+        """Rule-based hook for future policy tuning - no ML in Phase 6."""
+        return {"adjustments": {}, "note": "calibrate stub - Phase 6"}

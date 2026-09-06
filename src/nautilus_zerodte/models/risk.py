@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class RiskPolicy(BaseModel):
-    """Greek and desk limits — value object only; no greek math."""
+    """Greek and desk limits - value object only; no greek math."""
 
     model_config = ConfigDict(frozen=True)
 

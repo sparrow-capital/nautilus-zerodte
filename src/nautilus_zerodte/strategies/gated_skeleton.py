@@ -33,7 +33,7 @@ class GatedSkeletonStrategyConfig(StrategyConfig, frozen=True):
 
 
 class GatedSkeletonStrategy(Strategy):
-    """Phase 2 stub — evaluates pre-greek gates on first quote tick; no orders."""
+    """Phase 2 stub - evaluates pre-greek gates on first quote tick; no orders."""
 
     def __init__(self, config: GatedSkeletonStrategyConfig) -> None:
         super().__init__(config)

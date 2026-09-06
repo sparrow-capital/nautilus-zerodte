@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import require_catalog
 from nautilus_zerodte.config.loader import load_config
 from nautilus_zerodte.journal.service import Journal
 from nautilus_zerodte.models.enums import GateStage
@@ -16,13 +17,11 @@ PROFILE_PATH = REPO_ROOT / "configs" / "profiles" / "backtest_spy.yaml"
 
 @pytest.fixture
 def catalog_path() -> Path:
-    if not CATALOG_PATH.exists() or not any(CATALOG_PATH.rglob("*.parquet")):
-        pytest.skip("Catalog fixture not built — run scripts/build_catalog_fixture.py")
-    return CATALOG_PATH
+    return require_catalog(CATALOG_PATH)
 
 
 def test_ib_backtest_full_journal_trail(catalog_path: Path, tmp_path: Path) -> None:
-    """Phase 8 vertical slice: gates → BAG spread order → fill → PnL on SPY catalog."""
+    """Phase 8 vertical slice: gates -> BAG spread order -> fill -> PnL on SPY catalog."""
     journal_path = tmp_path / "ib_spy_trail.jsonl"
     config = load_config(PROFILE_PATH)
     config = config.model_copy(

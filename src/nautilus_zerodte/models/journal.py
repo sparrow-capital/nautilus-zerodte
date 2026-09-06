@@ -10,7 +10,7 @@ from nautilus_zerodte.models.enums import GateStage
 
 
 class JournalEntry(BaseModel):
-    """Append-only audit record — cross-cutting across gates, orders, and lifecycle."""
+    """Append-only audit record - cross-cutting across gates, orders, and lifecycle."""
 
     model_config = ConfigDict(frozen=True)
 

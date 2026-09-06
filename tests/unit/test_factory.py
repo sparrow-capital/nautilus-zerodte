@@ -67,7 +67,9 @@ def test_deribit_backtest_fee_model_wired() -> None:
     assert "MakerTakerFeeModel" in fee_model.fee_model_path
 
     venue = _backtest_venue_config(config)
-    assert venue.fee_model is not None
+    # Relation, not presence: the venue must carry the SAME fee model the factory just built.
+    # `is not None` passed even when the two were unrelated.
+    assert venue.fee_model.fee_model_path == fee_model.fee_model_path
 
 
 def test_ib_backtest_fixed_fee_model_wired() -> None:
@@ -86,7 +88,9 @@ def test_ib_backtest_fixed_fee_model_wired() -> None:
     assert fee_model.config["commission"] == "0.65 USD"
 
     venue = _backtest_venue_config(config)
-    assert venue.fee_model is not None
+    # Relation, not presence: the venue must carry the SAME fee model the factory just built.
+    # `is not None` passed even when the two were unrelated.
+    assert venue.fee_model.fee_model_path == fee_model.fee_model_path
 
 
 def test_selector_actor_registered_when_multi_strategy() -> None:

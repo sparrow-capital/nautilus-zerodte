@@ -8,7 +8,7 @@ from nautilus_zerodte.models.trade_intent import TradeIntent
 
 
 class HumanApprovalHandler:
-    """Stub human approval — journals and auto-approves for Phase 7 plumbing."""
+    """Stub human approval - journals and auto-approves for Phase 7 plumbing."""
 
     def __init__(self, journal: Journal) -> None:
         self._journal = journal
@@ -31,7 +31,7 @@ class HumanApprovalHandler:
 
 
 class AutomationHandler:
-    """Automation approval path — journals before publish to execution."""
+    """Automation approval path - journals before publish to execution."""
 
     def __init__(self, journal: Journal) -> None:
         self._journal = journal

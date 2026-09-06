@@ -16,7 +16,7 @@ class SkeletonZeroDteStrategyConfig(StrategyConfig, frozen=True):
 
 
 class SkeletonZeroDteStrategy(Strategy):
-    """Phase 1 stub — journals lifecycle only; no subscriptions or orders."""
+    """Phase 1 stub - journals lifecycle only; no subscriptions or orders."""
 
     def __init__(self, config: SkeletonZeroDteStrategyConfig) -> None:
         super().__init__(config)
