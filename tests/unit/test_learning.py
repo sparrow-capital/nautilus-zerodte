@@ -129,4 +129,4 @@ def test_learning_on_order_filled_without_intent(tmp_path: Path) -> None:
 def test_learning_calibrate_stub(tmp_path: Path) -> None:
     journal = Journal(tmp_path / "unused.jsonl")
     module = LearningModule(journal, strategy_id="ref-001")
-    assert module.calibrate() == {"adjustments": {}, "note": "calibrate stub — Phase 6"}
+    assert module.calibrate() == {"adjustments": {}, "note": "calibrate stub - Phase 6"}

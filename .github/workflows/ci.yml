@@ -27,8 +27,10 @@ jobs:
       - name: Lint
         run: uv run ruff check src tests
 
-      - name: Unit tests
-        run: uv run pytest tests/unit/
+      - name: Format check
+        run: uv run ruff format --check src tests
 
-      - name: Backtest integration smoke
-        run: uv run pytest tests/integration/test_backtest_smoke.py -v
+      # The whole suite, not tests/unit plus one integration file. CI previously ran 1 of 6
+      # integration files, so five of them could rot without anyone hearing about it.
+      - name: Tests
+        run: uv run pytest tests/ -q

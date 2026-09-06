@@ -70,3 +70,20 @@ def test_repo_runs_dir_untouched(request: pytest.FixtureRequest) -> Iterator[Non
             f"({REPO_RUNS_DIR}). Tests must not touch the operational audit trail. "
             f"Before: {before}. After: {after}."
         )
+
+
+def require_catalog(path: Path) -> Path:
+    """Skip unless a catalog fixture is genuinely present AND populated.
+
+    Six integration files each grew their own copy of this guard and they had already
+    diverged: three checked only `path.exists()`, three also required an actual parquet file.
+    An empty-but-present catalog directory therefore SKIPPED three files and hard-FAILED the
+    other three - half the integration layer disappearing quietly while the other half shouted.
+    One guard, so the two halves cannot drift apart again.
+
+    Existence alone is the weaker check and is not enough: `scripts/build_catalog_fixture.py`
+    creates the directory before it writes into it.
+    """
+    if not path.exists() or not any(path.rglob("*.parquet")):
+        pytest.skip(f"Catalog fixture not built at {path} - see scripts/build_catalog_fixture.py")
+    return path
