@@ -36,7 +36,7 @@ def run_catalog_partitions(
     *,
     max_workers: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Offline ProcessPool map over catalog partitions — never on the order path."""
+    """Offline ProcessPool map over catalog partitions - never on the order path."""
     catalog_path = Path(catalog_path)
     partitions = list_quote_tick_partitions(catalog_path)
     if not partitions:
