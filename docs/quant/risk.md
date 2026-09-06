@@ -9,18 +9,30 @@ Loss limiting is a feature with acceptance criteria, not a hope. Read this befor
 
 Every row needs a test that **trips** it. A limit with no test does not exist.
 
-| Guardrail | Enforced where | The test must show |
-| --- | --- | --- |
-| Per-trade maximum loss | Strategy FSM exit, gate sizing | A losing path exits at the cap |
-| Daily loss limit, then flat and halt | Risk actor | Trading stops for the session on breach |
-| Consecutive-loss circuit breaker | Risk actor | Breaker trips and requires manual reset |
-| Net greek caps (delta, gamma, vega) | Greek gate | An intent that would breach is rejected |
-| Concentration cap per strike and per expiry | Diversification | Over-cap intent rejected |
-| **Margin utilisation ceiling** | Risk actor | Halt above threshold before liquidation risk |
-| Data staleness halt | Gate context | Stale snapshot rejects rather than trades |
-| Reconciliation mismatch halt | Node startup and reconnect | Mismatch halts and journals; never auto-corrects |
-| Max orders and notional per minute | Adapter or risk actor | Rate breach rejects and journals |
-| Operator kill switch | **NOT IMPLEMENTED** - see `docs/killswitch_plan.md` | No test can trip it, because there is nothing to trip |
+| Guardrail | Enforced where | The test must show | Trip test |
+| --- | --- | --- | --- |
+| Per-trade maximum loss | Strategy FSM exit, gate sizing | A losing path exits at the cap | NOT IMPLEMENTED |
+| Daily loss limit, then flat and halt | Gate only - nothing sets the flag | Trading stops for the session on breach | NOT IMPLEMENTED |
+| Consecutive-loss circuit breaker | NOT IMPLEMENTED | Breaker trips and requires manual reset | NOT IMPLEMENTED |
+| Net greek caps (delta, gamma, vega) | Greek gate | An intent that would breach is rejected | `tests/unit/test_gates.py::test_check_risk_policy_wrapper` |
+| Concentration cap per strike and per expiry | Declared in `models/risk.py`, unenforced | Over-cap intent rejected | NOT IMPLEMENTED |
+| Margin utilisation ceiling | NOT IMPLEMENTED | Halt above threshold before liquidation risk | NOT IMPLEMENTED |
+| Data staleness halt | Gate context | Stale snapshot rejects rather than trades | `tests/unit/test_gates.py::test_evaluate_operational_stale_quote` |
+| Reconciliation mismatch halt | NOT IMPLEMENTED | Mismatch halts and journals; never auto-corrects | NOT IMPLEMENTED |
+| Max orders and notional per minute | NOT IMPLEMENTED | Rate breach rejects and journals | NOT IMPLEMENTED |
+| Operator kill switch | NOT IMPLEMENTED - see `docs/killswitch_plan.md` | No test can trip it, because there is nothing to trip | NOT IMPLEMENTED |
+
+**Two of ten.** That is the real state, and it is now machine-checked:
+`tests/unit/test_guardrail_registry.py` parses this table and fails if a row names a trip test
+that does not exist, so a row cannot quietly claim coverage it does not have. The only way to
+move a row off NOT IMPLEMENTED is to name a test that is really there.
+
+**"Daily loss limit" deserves its own note**, because it looks implemented and is not.
+`evaluate_operational` does reject when `context.daily_loss_breached` is true, and
+`test_evaluate_operational_daily_loss` proves that. But `daily_loss_breached` is only ever
+declared (`gates/context.py:27`, default `False`) and read (`gates/evaluator.py:78`) - **nothing
+in `src/` ever sets it**, and `max_daily_loss` is read by nothing at all. A gate with no trigger
+is not a limit. That is exactly the shape of failure this table exists to stop hiding.
 
 **What does not exist, stated plainly.** There is no file trigger, no signal trigger and no CLI
 trigger for an operator flatten. `nautilus-zerodte flatten` appends a `FLATTEN_REQUEST` line to the
