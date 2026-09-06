@@ -40,11 +40,15 @@ def build_deribit_wiring(config: AppConfig, *, dry_run: bool) -> VenueClientWiri
 
     # Use string primitives so TradingNodeConfig can be JSON-encoded for streaming.
     environment = "TESTNET" if config.deribit.testnet else "MAINNET"
-    product_types = ("OPTION", "FUTURE")
+    # OPTION_COMBO is the instrument the strategy actually trades: the selector builds a combo
+    # id and `submit_entry` looks it up in the cache. Omitting it meant that lookup could never
+    # succeed. OPTION is still needed for the legs (per-leg fills are dropped if their
+    # instruments are absent) and FUTURE for the perpetual hedge.
+    product_types = ("OPTION", "FUTURE", "OPTION_COMBO")
     api_key, api_secret = _resolve_api_credentials(config)
     if not dry_run and (api_key is None or api_secret is None):
         msg = (
-            "Deribit credentials missing for live trading — set "
+            "Deribit credentials missing for live trading - set "
             f"{config.deribit.api_key_env} and {config.deribit.api_secret_env}"
         )
         raise ValueError(msg)
