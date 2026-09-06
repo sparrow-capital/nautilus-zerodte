@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ChainEvaluationContext:
-    """Normalized chain signal inputs for build_intent — live slice or backtest synthetic."""
+    """Normalized chain signal inputs for build_intent - live slice or backtest synthetic."""
 
     instrument_id: str
     underlying_mid: float

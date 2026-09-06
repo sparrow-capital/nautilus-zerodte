@@ -44,7 +44,7 @@ def build_deribit_wiring(config: AppConfig, *, dry_run: bool) -> VenueClientWiri
     api_key, api_secret = _resolve_api_credentials(config)
     if not dry_run and (api_key is None or api_secret is None):
         msg = (
-            "Deribit credentials missing for live trading — set "
+            "Deribit credentials missing for live trading - set "
             f"{config.deribit.api_key_env} and {config.deribit.api_secret_env}"
         )
         raise ValueError(msg)

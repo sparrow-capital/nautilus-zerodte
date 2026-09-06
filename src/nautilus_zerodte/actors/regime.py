@@ -40,7 +40,7 @@ def compute_regime_tag(
 
 
 class RegimeActor(Actor):
-    """Rule-based regime tags for gate input — no ML."""
+    """Rule-based regime tags for gate input - no ML."""
 
     def __init__(self, config: RegimeActorConfig) -> None:
         super().__init__(config)

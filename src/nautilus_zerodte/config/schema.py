@@ -1,4 +1,4 @@
-"""Configuration schema — re-exports for backward compatibility."""
+"""Configuration schema - re-exports for backward compatibility."""
 
 from nautilus_zerodte.config.resolvers import (
     resolved_option_expiry_time,

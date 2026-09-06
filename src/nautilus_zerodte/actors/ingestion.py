@@ -25,7 +25,7 @@ def plan_subscriptions(
     chain_snapshot_interval_ms: int,
     budget: IngestionBudget,
 ) -> SubscriptionPlan:
-    """Pure subscription planner — HOT/WARM tiers aligned with ingestion-tiers.md."""
+    """Pure subscription planner - HOT/WARM tiers aligned with ingestion-tiers.md."""
     interval = min(
         max(chain_snapshot_interval_ms, budget.min_snapshot_interval_ms),
         budget.max_snapshot_interval_ms,
@@ -58,7 +58,7 @@ def plan_subscriptions(
 
 
 class IngestionPlannerActor(Actor):
-    """Emits a cost-aware subscription plan on start — Strategies call NT subscribe methods."""
+    """Emits a cost-aware subscription plan on start - Strategies call NT subscribe methods."""
 
     def __init__(self, config: IngestionPlannerActorConfig) -> None:
         super().__init__(config)

@@ -72,7 +72,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_config(profile_path: Path | str) -> AppConfig:
-    """Load layered YAML: base → risk → strategy → profile → session → profile."""
+    """Load layered YAML: base -> risk -> strategy -> profile -> session -> profile."""
     profile = Path(profile_path).resolve()
     configs_root = profile.parent.parent
 

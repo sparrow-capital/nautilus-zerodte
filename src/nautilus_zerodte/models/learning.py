@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LearningRecord(BaseModel):
-    """PnL attribution record — theta/gamma/vega, commission, slippage, edge comparison."""
+    """PnL attribution record - theta/gamma/vega, commission, slippage, edge comparison."""
 
     model_config = ConfigDict(frozen=True)
 
