@@ -1,44 +1,59 @@
 @startuml state-diagram
-title nautilus_zerodte — State Diagram (per-strategy lifecycle + SessionActor)
+title nautilus_zerodte - State Diagram (per-strategy lifecycle + SessionActor)
+
+' Transition labels are the `reason` recorded by BaseZeroDteStrategy._transition and are
+' therefore public API (hard rule 8). Renaming one is a breaking change, so this diagram
+' names them verbatim rather than describing them.
 
 [*] --> Flat
 
 state Flat {
   Flat : no open position
-  Flat : reject new entries if SessionActor blackout
+  Flat : entries refused during SessionActor blackout
 }
 
-Flat --> Evaluating : on_option_chain\nor on_quote_tick
+Flat --> Evaluating : signal
 
 state Evaluating {
-  Evaluating : layered gates:\nedge, liquidity, regime,\nsession, greek, ops
-  Evaluating : build TradeIntent +\ntarget spread InstrumentId\n(combo or BAG per venue)
+  Evaluating : build_intent, then the layered gates:\nedge, liquidity, regime, session,\noperational, greek
 }
 
-Evaluating --> Flat : any gate fails\n(journal reason)
-Evaluating --> PendingEntry : submit_order_list
+Evaluating --> Flat : no_intent
+Evaluating --> Flat : gate_reject
+Evaluating --> Flat : greek_reject
+Evaluating --> Flat : dry_run
+Evaluating --> PendingApproval : selector_queue\n(selector enabled)
+Evaluating --> PendingEntry : submit\n(no selector)
+
+state PendingApproval {
+  PendingApproval : intent published on the bus,\nawaiting the SelectorActor
+  PendingApproval : only reached when\nAppConfig.selector_enabled()
+}
+
+PendingApproval --> PendingEntry : submit\n(intent approved)
+PendingApproval --> Flat : selector_reject
 
 state PendingEntry {
-  PendingEntry : awaiting RiskEngine +\nvenue acceptance
+  PendingEntry : order submitted, awaiting\nRiskEngine and venue acceptance
 }
 
-PendingEntry --> Flat : rejected or cancelled
-PendingEntry --> InPosition : fill confirmed
+PendingEntry --> InPosition : entry_fill
+PendingEntry --> Flat : order_rejected
+PendingEntry --> Flat : order_denied
 
 state InPosition {
-  InPosition : monitor on_quote_tick\n+ on_option_greeks
-  InPosition : brackets / OrderEmulator active
+  InPosition : monitor on_quote_tick\nand on_option_greeks
+  InPosition : delta band breach -> hedge
 }
 
-InPosition --> Exiting : TP / SL / hedge trigger\n/ time stop
-InPosition --> Flat : SessionActor flatten signal\n(T-30m before expiry)
+InPosition --> Exiting : tp_sl
+InPosition --> Exiting : session_blackout
 
 state Exiting {
-  Exiting : submit flatten OrderList
-  Exiting : wait for flat confirmation
+  Exiting : exit order submitted,\nawaiting the fill
 }
 
-Exiting --> Flat : flat confirmed
+Exiting --> Flat : exit_fill
 
 Flat --> [*] : TradingNode stop
 
@@ -53,24 +68,37 @@ state "SessionActor" as SA {
 }
 
 note right of Flat
-  During blackout: Flat rejects entries;
-  InPosition may still manage/flatten.
-  Crypto: daily UTC expiry (e.g. 08:00).
+  During blackout: Flat refuses entries;
+  InPosition may still manage and flatten.
+  Crypto: daily UTC expiry (for example 08:00).
   Equity: US market close (config overlay).
 end note
 
 note right of Evaluating
-  No global batch cycle.
-  Each Strategy owns its own state machine.
-  Default = no trade until all gates pass.
-  Venue spread selection delegated to
+  No global batch cycle. Each Strategy owns
+  its own state machine, and the default is
+  no trade until every gate passes.
+  Venue spread selection is delegated to
   strategies/selectors/ (Deribit | IB).
+
+  `dry_run` leaves here for Flat, which is
+  why defaulting it on would produce runs
+  with gates passing and zero trades (D10).
 end note
 
-note bottom of InPosition
-  Post-entry: delta band breach -> hedge
-  (perp on Deribit, underlying on IB);
-  time stop -> flatten.
-  Journal on every transition.
+note bottom of PendingEntry
+  flatten_positions() accepts PendingEntry,
+  cancels the open orders, and does NOT
+  transition. The state leaves PendingEntry
+  only on a fill, a rejection or a denial.
+end note
+
+note bottom of Exiting
+  NOT REACHABLE TODAY (ZR-36). flatten_positions
+  calls self.cancel_all_orders() with no argument
+  while NT 1.229.0 requires instrument_id
+  positionally, so the only wired path into
+  Exiting raises TypeError. Recorded as a strict
+  xfail in tests/unit/test_flatten_path.py.
 end note
 @enduml

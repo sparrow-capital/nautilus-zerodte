@@ -133,6 +133,74 @@ rather than abandoning the tiering.
 
 ---
 
+## D8 - The operator kill switch is a latched trip file that flattens without stopping the node
+**2026-09-08**
+
+**Decision.** The operator emergency stop is a per-trader sentinel file at
+`<runs>/halt/<trader_id>.trip`, written atomically (temp file in the same directory, then
+`os.replace`) by `nautilus-zerodte halt`, and observed two ways: a `HaltActor` polling it on an
+engine-clock timer, and a one-shot `Path.exists()` in every strategy's `on_start`. Observation
+latches `self._halted` on each strategy - assigned `True` in exactly one place and `False` in
+exactly one place, `__init__`, forever. The latch closes intake at the OPERATIONAL gate and at
+both submit funnels, drops any intent sitting with the selector, and then flattens.
+
+The flatten is NautilusTrader's `Strategy.market_exit()` for the non-spread instruments PLUS our
+own combo-first close sequence over an `OrderFilled`-sourced exposure record, with short-leg-first
+leg-by-leg as the bounded fallback (D11, D12, D13). Flatness is verified against BOTH
+`Cache.orders_open/orders_inflight/positions_open(strategy_id=...)` AND
+`Portfolio.is_completely_flat()`, and journalled as `FLATTEN_COMPLETE {flat: true}` or, on any
+residual or disagreement between the two sources, `{flat: false}` at ERROR. The CLI blocks on the
+resulting `HALT_ACK` and exits 0 only on a confirmed-flat acknowledgement, 3 on
+acknowledged-but-not-flat, 4 on silence.
+
+The trip does NOT stop the node, does NOT set `TradingState`, and does NOT retry beyond NT's own
+bounded `market_exit_max_attempts` loop. Resuming requires `halt-clear` from a separate process
+AND a node restart: clearing the file cannot un-halt a running node, because the in-process latch
+has no setter.
+
+**Why.** Three transports cross the CLI/node process boundary: a file, an OS signal, or NT's
+Redis-backed external message bus. NT already claims SIGTERM/SIGINT/SIGABRT on the live loop
+(system/kernel.py:566-572) and a signal carries no payload; Redis is a new hard dependency (hard
+rule 10) whose availability correlates with the incident it exists to end. A local file plus a
+bounded `stat` is the smallest thing that works.
+
+The property that decides it is durability rather than simplicity. A signal is an event: if
+nobody was listening at that instant it never happened. A trip file is state, so a node that is
+down when the operator trips it halts the moment it starts, before it can touch the market.
+
+Node shutdown is excluded from the trip because `_on_shutdown_system` sets backtest FORCE_STOP
+synchronously (system/kernel.py:632-634) and FORCE_STOP breaks the run loop
+(backtest/engine.pyx:1668) before `_process_and_settle_venues` and `_flush_accumulator_events`
+(engine.pyx:1750-1763): a trip that shuts down cannot settle its own closing orders in backtest,
+and in live it kills the supervisor while residuals may remain. `TradingState` is excluded because
+HALTED denies every `SubmitOrder` including the flatten's own closes (risk/engine.pyx:1136-1148),
+and REDUCING denies only BUY-when-net-long and SELL-when-net-short without ever reading
+`reduce_only` (risk/engine.pyx:1149-1179), which blocks nothing on the fresh option legs a 0DTE
+structure opens. The strategy-side `on_start` check exists because `Trader._start`
+(trading/trader.py:254-264) starts every actor before any strategy, so an actor publish at its own
+`on_start` reaches zero subscribers and the first poll republish arrives after the strategy has
+already entered.
+
+**AMENDED BEFORE COMMITTING.** The design as drafted on 2026-09-05 said the flatten was entirely
+NT's. That was true of the draft and is not true of the design: `market_exit()` builds its
+instrument set from `cache.positions_open()` plus open and in-flight orders
+(trading/strategy.pyx:1780-1794), and NT creates no `Position` at all for a spread fill
+(execution/engine.pyx:1653; `docs/concepts/positions.md:445` states it), so a filled Deribit combo
+contributes nothing to that set. Shipping the draft would have produced a flatten that reports
+completion with the position still on. The combo path is ours; everything else in the draft
+stands.
+
+**Reversal condition.** Any of three observations. (1) We take a msgbus-database dependency for
+another reason, at which point the trip file is deleted and the CLI publishes on an external
+stream - `ShutdownSystem` and `TradingStateChanged` are already on NT's externally-serializable
+type list (serialization/base.pyx:235-275). (2) A load test shows the poll's `os.stat` in the p99
+order-path latency tail, at which point the transport moves to SIGUSR1 registered with
+`loop.add_signal_handler` plus a pidfile. (3) NautilusTrader ships a `SetTradingState` command
+message and a HALTED variant that permits reduce-only orders, at which point the engine-level halt
+replaces the strategy latch as the primary control and the latch becomes belt-and-braces.
+
+---
+
 ## D9 - Run artifacts resolve under ZERODTE_RUNS_DIR, with an autouse tripwire in tests
 **2026-09-05**
 
