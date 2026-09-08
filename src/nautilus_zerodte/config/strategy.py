@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nautilus_zerodte.config.venue import (
     DeribitConfig,
@@ -18,11 +18,67 @@ from nautilus_zerodte.config.venue import (
     VenueConfig,
 )
 from nautilus_zerodte.models.diversification import DiversificationPolicy
+from nautilus_zerodte.models.halt import TRIP_DIR_NAME, trip_path
 from nautilus_zerodte.models.risk import RiskPolicy
 
 
 class JournalConfig(BaseModel):
     path: str = "runs/latest.jsonl"
+
+
+class HaltConfig(BaseModel):
+    """Operator kill-switch knobs.
+
+    A node-level operator control is not venue knowledge, so this lives here next to
+    JournalConfig and not in venue.py (hard rule 1).
+
+    The ranges are enforced rather than only documented. The failure they prevent is an operator
+    typo in a profile nobody reads again until the night it matters, and a comment does not
+    prevent it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    # Off in base.yaml, true only in the paper and live profiles. Whether `paper` should REFUSE
+    # to start when this is false is open question 3 in docs/killswitch_plan.md.
+    enabled: bool = False
+
+    # THIS is the trip-to-first-cancel bound: the worst case between the operator writing the
+    # trip file and the first cancel leaving. It does not affect the startup case, where each
+    # strategy checks the file itself before subscribing to any data.
+    poll_secs: float = Field(default=1.0, ge=0.25, le=5.0)
+
+    # Roughly 3x the exit budget below, so a healthy exit acknowledges well before this fires.
+    ack_timeout_secs: float = Field(default=30.0, ge=5.0, le=120.0)
+
+    # NautilusTrader's own market_exit retry loop, passed through rather than reimplemented (T1).
+    market_exit_interval_ms: int = Field(default=100, ge=50, le=500)
+    # 60 x 100ms is a 6.0s budget. NT's own default of 100 gives exactly 10.0s, which ties with
+    # its default timeout_post_stop of 10.0s - the flatten and the exec-client disconnect racing
+    # each other. The validator below refuses that tie instead of leaving it to chance.
+    market_exit_max_attempts: int = Field(default=60, ge=1, le=1000)
+    # False ONLY for a venue that rejects reduce_only on options.
+    market_exit_reduce_only: bool = True
+
+    timeout_post_stop_secs: float = Field(default=20.0, ge=15.0, le=60.0)
+
+    # PHASE 2, ships false. A trip that shuts the node down cannot settle its own closing orders
+    # in backtest: _on_shutdown_system sets FORCE_STOP synchronously (kernel.py:632-634) and
+    # FORCE_STOP breaks the run loop (engine.pyx:1668) before settlement.
+    shutdown_after_flat: bool = False
+
+    @model_validator(mode="after")
+    def _exit_budget_fits_inside_post_stop(self) -> HaltConfig:
+        budget_secs = self.market_exit_interval_ms * self.market_exit_max_attempts / 1000
+        if budget_secs >= self.timeout_post_stop_secs:
+            raise ValueError(
+                f"halt: market exit budget {budget_secs}s (market_exit_interval_ms="
+                f"{self.market_exit_interval_ms} x market_exit_max_attempts="
+                f"{self.market_exit_max_attempts}) must be strictly less than "
+                f"timeout_post_stop_secs={self.timeout_post_stop_secs}, or the execution "
+                f"clients can disconnect while the flatten is still retrying."
+            )
+        return self
 
 
 class ReferenceStrategyConfig(BaseModel):
@@ -117,6 +173,7 @@ class AppConfig(BaseModel):
     allow_live: bool = False
     venue: VenueConfig = Field(default_factory=VenueConfig)
     journal: JournalConfig = Field(default_factory=JournalConfig)
+    halt: HaltConfig = Field(default_factory=HaltConfig)
     risk: RiskPolicy = Field(default_factory=RiskPolicy)
     session: SessionConfig = Field(default_factory=SessionConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
@@ -136,6 +193,17 @@ class AppConfig(BaseModel):
 
     def resolved_journal_path(self, runs_dir: Path | None = None) -> Path:
         return _resolve_under_runs(self.journal.path, runs_dir)
+
+    def resolved_halt_trip_path(self, runs_dir: Path | None = None) -> Path:
+        """`<runs>/halt/<trader_id>.trip`, resolved through the same seam as the journal.
+
+        Sharing `_resolve_under_runs` means the trip file inherits the ZERODTE_RUNS_DIR override
+        (D9) and therefore the autouse tripwire in tests/conftest.py. That matters more here
+        than it does for the journal: a stray trip file written by pytest into the operator's
+        real runs/halt/ would kill their next live session at startup.
+        """
+        base = _resolve_under_runs(TRIP_DIR_NAME, runs_dir).parent
+        return trip_path(base, self.trader_id)
 
     def resolved_strategies(self) -> list[StrategyRuntimeConfig]:
         if self.strategies:
