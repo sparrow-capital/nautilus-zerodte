@@ -110,7 +110,7 @@ THE PROPERTY THIS BUYS, stated exactly: zero journal entries whose event is in {
 | --- | --- | --- | --- |
 | H0 | Runs-dir env seam and the tests/ tripwire (stops pytest writing the operational audit trail) | medium | DONE e9900ca |
 | H1 | Journal.load tolerates a torn trailing line | small | DONE deec460 |
-| H2 | Truth-first documentation correction: risk.md, decisions D8, and the stale state diagram | small | not started |
+| H2 | Truth-first documentation correction: risk.md, decisions D8, and the stale state diagram | small | DONE (three commits, see below) |
 | H3 | Combo-first flatten with short-leg-first fallback, exposure sourced from OrderFilled, and verified flatness | large | not started (REWRITTEN 2026-09-06 - the old market_exit-only approach is dead, see D11) |
 | H4 | Halt trip-file service, bus contract and config (no NT import, no behaviour yet) | medium | not started |
 | H5 | Strategy halt latch, intake guards, and the startup pre-check | large | not started |
@@ -173,7 +173,7 @@ Add `ZERODTE_RUNS_DIR` to `.env.example` (name only) and one clause to the confi
 
 **Risk.** The 'last line only' rule is subtle. If someone later reads the file with a different splitter (for example `splitlines()` on a file ending in a newline), the torn line may not be last. Keep the rule stated in a comment at the parse site.
 
-### H2 - Truth-first documentation correction: risk.md, decisions D8, and the stale state diagram  [not started]
+### H2 - Truth-first documentation correction: risk.md, decisions D8, and the stale state diagram  [DONE]
 
 **Why.** docs/quant/risk.md:23 currently documents a control that does not exist in any of its three claimed forms - FILE exists nowhere in NT, CLI cannot reach the node, and SIGNAL flattens nothing because manage_stop defaults False. The doc must stop lying BEFORE any code lands, so the repo is never in a state where a doc claims something the code does not do. No code changes here, so nothing can regress.
 
@@ -191,6 +191,49 @@ Create tests/unit/test_docs.py with a single narrowly scoped content test.
 2. `test_state_diagram_lists_every_strategy_state`: parse the .puml for state names and assert every member of `StrategyState` appears. RED BY: revert the diagram - PendingApproval is missing and it fails. This one is genuinely useful: it makes the diagram fail the day the FSM grows a state, which is exactly how it got stale.
 
 **Risk.** A content test over prose is brittle to rewording. Keep the assertions to the two specific substrings and the enum-name set, not to sentence shapes.
+
+**AS BUILT.** H2 landed across three commits rather than one, and the task table said "not
+started" for two of them, which is its own small instance of the defect this task is about.
+
+- The risk.md correction landed in `9d2fc9e` ("stop risk.md claiming guardrails that do not
+  exist"). The false operator kill-switch row and the four rows naming a Risk actor that has
+  never existed are gone.
+- The content test landed in `a9fd701` as `tests/unit/test_guardrail_registry.py`, NOT as the
+  `tests/unit/test_docs.py` specified above, and it is stronger than what was specified. Rather
+  than pinning one known-false sentence, it parses the guardrail table's "Trip test" column and
+  fails when a row names a test that is not in the suite. The honest number it reports is 2 of 10.
+- D8 and the state diagram land here.
+
+**D8 differs from the draft in this file**, and the difference is the reason it was not committed
+in September: the draft says the flatten is entirely NautilusTrader's, which the combo research
+disproved. The committed entry says the flatten is NT's `market_exit` for the non-spread
+instruments plus our own combo-first close, and records that shipping the draft would have
+produced a flatten reporting completion with the position still on. Everything else in the draft
+stands.
+
+**The state diagram was worse than the plan said, and the plan was also wrong about it in one
+respect.** Confirmed stale: `PendingApproval` was absent entirely, `PendingEntry -> Flat` was
+labelled "cancelled" which is not a transition the code has (the real ones are `order_rejected`
+and `order_denied`), and there was a direct `InPosition -> Flat` edge on the flatten signal. The
+plan's claim that the diagram lacked the `InPosition -> Exiting -> Flat` path was wrong - that
+path was drawn; the direct edge existed alongside it. Every edge is now labelled with the
+`reason` string the code actually records, since those are public API under hard rule 8.
+
+**Enforcement, so it cannot rot again.** `tests/unit/test_state_diagram.py` parses the diagram's
+EDGES and asserts every `StrategyState` member has an edge in and an edge out, and that every
+literal `_transition(..., reason="...")` in `strategies/` appears in an edge label.
+
+The first version of that test asked whether the state's NAME appeared anywhere in the file, and
+a mutation proved it vacuous: deleting the only edge into `PendingApproval` still left the name in
+its own state block and in two outbound edges, so the check passed on a diagram carrying an
+unreachable state - exactly the defect it was written to catch. Recorded here because the same
+substring-instead-of-structure mistake is available to every future doc test.
+
+**Not done, and not in scope here:** hard rule 9 is still aspirational outside `.md`, `src/` and
+`tests/`. All five `docs/design/*.puml` files carried em-dashes, as do several `configs/*.yaml`
+and `.cursor/plans/*`. Only `state-diagram.puml` is fixed, because that is the file this task
+touches. The repo-wide sweep plus a test that enforces the rule across every checked-in text file
+is a separate ticket.
 
 ### H3 - Combo-first flatten with short-leg-first fallback, exposure sourced from OrderFilled, and verified flatness  [not started]
 

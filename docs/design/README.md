@@ -180,6 +180,16 @@ for defaults per venue and subscription profile.
 | **Offline research** | ProcessPool map-reduce over catalog - optional, separate from live |
 | **Multi-strategy selection** | `SelectorActor` join barrier only when N strategies compete for shared capital |
 
+## Machine-checked
+
+`state-diagram.puml` is not maintained by hope. `tests/unit/test_state_diagram.py` parses its
+edges and fails when a `StrategyState` member has no edge in or no edge out, or when a
+`_transition(..., reason="...")` literal in `strategies/` is missing from every edge label.
+Transition reasons are public API (hard rule 8), so a renamed reason is already a breaking change
+and the test is the notification rather than friction.
+
+The other four diagrams are NOT checked. Treat them as illustrations until they are.
+
 ## Render
 
 ```bash
