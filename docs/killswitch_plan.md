@@ -112,7 +112,7 @@ THE PROPERTY THIS BUYS, stated exactly: zero journal entries whose event is in {
 | H1 | Journal.load tolerates a torn trailing line | small | DONE deec460 |
 | H2 | Truth-first documentation correction: risk.md, decisions D8, and the stale state diagram | small | not started |
 | H3 | Combo-first flatten with short-leg-first fallback, exposure sourced from OrderFilled, and verified flatness | large | not started (REWRITTEN 2026-09-06 - the old market_exit-only approach is dead, see D11) |
-| H4 | Halt trip-file service, bus contract and config (no NT import, no behaviour yet) | medium | not started |
+| H4 | Halt trip-file service, bus contract and config (no NT import, no behaviour yet) | medium | DONE feat/h4-halt-trip-file |
 | H5 | Strategy halt latch, intake guards, and the startup pre-check | large | not started |
 | H6 | HaltActor: poll, trip, republish, aggregate acks (and prove it does not shut the node down) | medium | not started |
 | H7 | Operator CLI: halt blocks and its exit code means something (the reported defect) | medium | not started |
@@ -536,7 +536,7 @@ on the return to Flat, so after one tp_sl exit that path is dead for the life of
 of scope here, but it means flatten becomes the only way out and its reliability matters more
 than it looks - file it.
 
-### H4 - Halt trip-file service, bus contract and config (no NT import, no behaviour yet)  [not started]
+### H4 - Halt trip-file service, bus contract and config (no NT import, no behaviour yet)  [DONE feat/h4-halt-trip-file]
 
 **Why.** The transport and the payload are pure data with no engine dependency, so they can land and be fully tested on any platform - including this Intel Mac, where nautilus_trader cannot be imported at all. Landing them separately means the actor and strategy tasks that follow are small and reviewable.
 
@@ -576,6 +576,54 @@ Add `AppConfig.halt` and `AppConfig.resolved_halt_trip_path(runs_dir=None) -> Pa
 6. `test_resolved_halt_trip_path_follows_runs_dir_seam`: honours ZERODTE_RUNS_DIR and an explicit argument, same precedence as the journal. RED BY: hardcode `Path("runs")` in `resolved_halt_trip_path` - the trip file then escapes the H0 tripwire and pytest can arm the operator's real kill switch.
 
 **Risk.** Topic strings are not covered by hard rule 8 today (only journal event names, gate stages and transition reasons are), so `control.halt` is cheap to name now and expensive later. Fix it in this task and do not rename it afterwards. Separately, `INGESTION_PLAN_TOPIC` is published with zero subscribers - proof that a topic can be added, wired and consumed by nobody without any test failing, which is why H5's and H8's tests assert on the CONSUMER, never on the publish.
+
+**AS BUILT, and where it differs from the spec above.**
+
+- The documented knob ranges are ENFORCED as pydantic `Field` constraints, not only written in
+  comments. A comment does not stop an operator typo in a profile nobody reads again until the
+  night it matters. **This has a consequence for H8:** the failure-injection profile in that task
+  says `poll_secs` 0.1, which `ge=0.25` now refuses. Use 0.25 - against a 9.9 second fixture that
+  is still about 39 polls, so nothing is lost. Relaxing the constraint to accommodate a test
+  would be the wrong repair.
+- `configs/base.yaml` carries `enabled: false` live and every other knob COMMENTED rather than
+  set, so the defaults have one home (`HaltConfig`) and a YAML copy cannot drift from it.
+- `TripRecord.requested_at_utc` is optional and this module never fills it in. A record
+  synthesised from a file we could not read does not know when the halt was requested, and
+  inventing a timestamp would put a fabricated fact in the evidence chain. It also keeps T3 out
+  of the question here: nothing in `models/halt.py` reads a clock.
+- A trip file from a FUTURE schema version is deliberately not special-cased. It parses and it
+  trips. Refusing to act on an unfamiliar version is the one failure mode this design cannot
+  tolerate, so there is no version check to get wrong.
+- The engine-free property is asserted rather than assumed:
+  `test_models_halt_does_not_import_the_engine` AST-parses the module and fails on any
+  `nautilus_trader` import. That is what keeps the CLI free of `Actor`, and what lets this task
+  be developed where no nautilus_trader wheel exists.
+
+**NOT done here, deliberately.** The local-filesystem requirement is stated in the module
+docstring and in `.env.example`, and is NOT yet enforced anywhere. Putting it in
+`docs/quant/risk.md` now would add a row describing a control that does not exist, which is the
+exact defect ZR-33 was built to stop. It becomes a real check in the ops epic
+(`zerodte preflight`), and risk.md gains its note when there is something true to say.
+
+**Guardrails, each watched RED by mutation (6 of the 22 tests; the rest are pins):**
+
+    M1 read_trip returns None on an unparseable file
+       AssertionError: an unparseable trip file must still trip, not return None
+    M2 read_trip returns None on an unreadable file
+       AssertionError: an unreadable trip file must still trip, not return None
+    M3 write_trip stages its temp file one directory up
+       AssertionError: temp file .../TRADER-001.trip.tmp is not in the target directory .../sub;
+       os.replace is only atomic within a single filesystem
+    M4 trip_path puts the trader id in a directory
+       AssertionError: assert 'trip.trip' == 'TRADER-001.trip'
+    M5 the budget validator is removed
+       Failed: DID NOT RAISE ValidationError
+    M6 models/halt.py imports nautilus_trader
+       AssertionError: models/halt.py must not import nautilus_trader.
+
+Suite 184 passed and 1 xfailed (was 160 collected), ruff check and format clean, on linux/amd64
+in `zerodte-test:1.229.0`. Both `backtest_btc.yaml` and `paper_btc.yaml` load a `HaltConfig` with
+`enabled` false and resolve a per-trader trip path.
 
 ### H5 - Strategy halt latch, intake guards, and the startup pre-check  [not started]
 

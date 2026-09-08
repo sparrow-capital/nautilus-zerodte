@@ -17,3 +17,21 @@ ib:
   host: "127.0.0.1"
   port: 7497
   client_id: 1
+
+# Operator kill switch. OFF here, and turned on only in the paper and live profiles: base.yaml
+# is the first merge layer, so every profile inherits this default and a profile always wins.
+#
+# The knobs below are shown commented rather than set, so the defaults have ONE home
+# (HaltConfig in config/strategy.py) and a YAML copy cannot drift away from it. Ranges are
+# enforced by the model, not just described here.
+halt:
+  enabled: false
+  # poll_secs: 1.0                 # 0.25 to 5.0. The trip-to-first-cancel bound.
+  # ack_timeout_secs: 30.0         # 5 to 120. Roughly 3x the exit budget below.
+  # market_exit_interval_ms: 100   # 50 to 500. NautilusTrader's own retry interval.
+  # market_exit_max_attempts: 60   # 1 to 1000. 60 x 100ms = a 6.0s exit budget.
+  # market_exit_reduce_only: true  # false ONLY for a venue rejecting reduce_only on options.
+  # timeout_post_stop_secs: 20.0   # 15 to 60. Must exceed the exit budget, or the execution
+  #                                # clients can disconnect mid-flatten. Enforced by a validator.
+  # shutdown_after_flat: false     # PHASE 2. A trip must not shut the node down - in backtest
+  #                                # that cannot settle its own closing orders.

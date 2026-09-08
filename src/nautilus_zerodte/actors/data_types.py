@@ -104,3 +104,44 @@ def approved_snapshot_to_trade_intent(snapshot: TradeIntentApprovedSnapshot) -> 
         projected_greeks=dict(snapshot.projected_greeks),
         rationale=dict(snapshot.rationale),
     )
+
+
+# Control-plane topics. Deliberately OUTSIDE NautilusTrader's "data." prefix and deliberately
+# not a new field on SessionPhaseSnapshot. Two publishers on one topic breaks
+# single-writer-per-state - the next SessionActor quote tick would overwrite the halt state -
+# and MessageBus.subscribe supports "*" wildcards, so a "data.*" subscriber would be handed a
+# control message it has no reason to see.
+HALT_TOPIC = "control.halt"
+HALT_ACK_TOPIC = "control.halt.ack"
+
+
+@dataclass(frozen=True, slots=True)
+class HaltSnapshot:
+    """Published once on trip, and republished unchanged on every later poll.
+
+    `source` records how the halt was observed - "file", "startup", or a republish - because
+    which of the two observation paths fired first is the thing that is hard to reconstruct
+    afterwards from a journal alone.
+    """
+
+    token: str
+    reason: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class HaltAckSnapshot:
+    """One strategy's answer to "are you flat", carrying the evidence rather than a verdict.
+
+    The three cache counts and the portfolio flag travel with `flat` so a disagreement between
+    the two flatness sources is visible in the journal instead of being collapsed into a single
+    boolean that cannot be argued with afterwards.
+    """
+
+    strategy_id: str
+    token: str
+    flat: bool
+    orders_open: int
+    orders_inflight: int
+    positions_open: int
+    portfolio_flat: bool
